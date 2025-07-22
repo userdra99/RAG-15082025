@@ -1,4 +1,4 @@
-# RAG Document Assistant with Jina Embeddings V4
+# RAG Document Assistant - Llama3.2, Jina Embeddings V4, LlamaIndex
 
 A production-ready Retrieval-Augmented Generation (RAG) system using Jina Embeddings V4 and LlamaIndex for document Q&A with multilingual support.
 
