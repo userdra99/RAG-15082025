@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+
+# Docker
+.dockerignore
+
+# Environment variables
+.env
+.env.local
+
+# Model cache
+~/.cache/huggingface/
+~/.cache/torch/
+
+# Data and logs
+data/*.pdf
+data/*.docx
+data/*.xlsx
+!data/.gitkeep
+logs/
+*.log
+
+# Qdrant data
+qdrant_data/
+
+# Alternative Docker configurations (keep main ones)
+docker-compose.simple.yml
+docker-compose.alternative.yml
+docker-compose.fallback.yml
+docker-compose.memory-optimized.yml
+Dockerfile.vllm.latest
+Dockerfile.vllm.alternative
+
+# Temporary files
+*.tmp
+*.temp

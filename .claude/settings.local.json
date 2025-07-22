@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(curl:*)",
+      "Bash(docker-compose logs:*)",
+      "Bash(nvidia-smi:*)",
+      "WebFetch(domain:docs.vllm.ai)",
+      "Bash(cp:*)",
+      "WebFetch(domain:docs.llamaindex.ai)",
+      "Bash(chmod:*)",
+      "Bash(grep:*)"
+    ],
+    "deny": []
+  }
+}
