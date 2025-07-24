@@ -1,6 +1,8 @@
 import os
 import time
 import logging
+import hashlib
+import json
 from pathlib import Path
 from typing import List, Dict, Any
 import pandas as pd
@@ -53,6 +55,8 @@ if 'index' not in st.session_state:
     st.session_state.index = None
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
+if 'last_document_hash' not in st.session_state:
+    st.session_state.last_document_hash = None
 
 class DoclingExcelReader:
     """Enhanced Excel reader using Docling with contextual chunking"""
@@ -368,7 +372,7 @@ def check_collection_exists(client, collection_name: str = "documents") -> bool:
         return False
 
 def load_documents(data_dir: str) -> List[Document]:
-    """Load documents from the data directory"""
+    """Load documents from the data directory with file hashing to prevent unnecessary reprocessing"""
     documents = []
     data_path = Path(data_dir)
     
@@ -376,10 +380,60 @@ def load_documents(data_dir: str) -> List[Document]:
         data_path.mkdir(parents=True, exist_ok=True)
         return documents
     
+    # Create hash storage directory
+    hash_dir = data_path / ".hashes"
+    hash_dir.mkdir(exist_ok=True)
+    hash_file = hash_dir / "file_hashes.json"
+    
+    # Load existing hashes
+    existing_hashes = {}
+    if hash_file.exists():
+        try:
+            with open(hash_file, 'r') as f:
+                existing_hashes = json.load(f)
+        except Exception as e:
+            logger.warning(f"Could not load existing hashes: {e}")
+    
+    # Calculate current file hashes
+    current_hashes = {}
+    processed_files = []
+    
     # Supported file extensions
-    pdf_files = list(data_path.glob("*.pdf"))
-    docx_files = list(data_path.glob("*.docx"))
-    xlsx_files = list(data_path.glob("*.xlsx"))
+    supported_files = []
+    supported_files.extend(list(data_path.glob("*.pdf")))
+    supported_files.extend(list(data_path.glob("*.docx")))
+    supported_files.extend(list(data_path.glob("*.xlsx")))
+    
+    # Calculate hashes for all supported files
+    for file_path in supported_files:
+        try:
+            # Calculate MD5 hash of file content
+            with open(file_path, 'rb') as f:
+                file_hash = hashlib.md5(f.read()).hexdigest()
+            current_hashes[str(file_path)] = file_hash
+        except Exception as e:
+            logger.error(f"Error calculating hash for {file_path}: {e}")
+            current_hashes[str(file_path)] = "error"
+    
+    # Track which files need processing
+    files_to_process = []
+    for file_path, current_hash in current_hashes.items():
+        file_path_obj = Path(file_path)
+        if str(file_path_obj) not in existing_hashes or existing_hashes[str(file_path_obj)] != current_hash:
+            files_to_process.append(file_path_obj)
+        else:
+            logger.info(f"Skipping unchanged file: {file_path_obj.name}")
+    
+    # Process only changed or new files
+    if not files_to_process:
+        logger.info("No new or changed files to process")
+        # Load existing documents from vector store if available
+        return documents
+    
+    # Separate files by type for processing
+    pdf_files = [f for f in files_to_process if f.suffix.lower() == '.pdf']
+    docx_files = [f for f in files_to_process if f.suffix.lower() == '.docx']
+    xlsx_files = [f for f in files_to_process if f.suffix.lower() == '.xlsx']
     
     # Load PDFs
     if pdf_files:
@@ -389,6 +443,7 @@ def load_documents(data_dir: str) -> List[Document]:
                 docs = pdf_reader.load_data(str(pdf_file))
                 documents.extend(docs)
                 logger.info(f"Loaded {len(docs)} documents from {pdf_file}")
+                processed_files.append(str(pdf_file))
             except Exception as e:
                 st.error(f"Error loading PDF {pdf_file}: {e}")
     
@@ -400,6 +455,7 @@ def load_documents(data_dir: str) -> List[Document]:
                 docs = docx_reader.load_data(str(docx_file))
                 documents.extend(docs)
                 logger.info(f"Loaded {len(docs)} documents from {docx_file}")
+                processed_files.append(str(docx_file))
             except Exception as e:
                 st.error(f"Error loading DOCX {docx_file}: {e}")
     
@@ -411,8 +467,31 @@ def load_documents(data_dir: str) -> List[Document]:
                 docs = excel_reader.load_data(str(xlsx_file))
                 documents.extend(docs)
                 logger.info(f"Loaded {len(docs)} contextual chunks from {xlsx_file}")
+                processed_files.append(str(xlsx_file))
             except Exception as e:
                 st.error(f"Error loading Excel {xlsx_file}: {e}")
+    
+    # Update hash file with processed files
+    if processed_files or existing_hashes != current_hashes:
+        # Update existing hashes with current hashes for processed files
+        for file_path, current_hash in current_hashes.items():
+            if file_path in [str(p) for p in processed_files]:
+                existing_hashes[file_path] = current_hash
+            elif file_path not in existing_hashes:
+                # Add new files that weren't processed (e.g., due to errors)
+                existing_hashes[file_path] = current_hash
+        
+        # Remove hashes for files that no longer exist
+        files_to_remove = [f for f in existing_hashes.keys() if not Path(f).exists()]
+        for file_to_remove in files_to_remove:
+            del existing_hashes[file_to_remove]
+        
+        try:
+            with open(hash_file, 'w') as f:
+                json.dump(existing_hashes, f, indent=2)
+            logger.info(f"Updated file hashes for {len(processed_files)} processed files")
+        except Exception as e:
+            logger.error(f"Error saving file hashes: {e}")
     
     return documents
 
