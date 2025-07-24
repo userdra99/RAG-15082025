@@ -25,3 +25,6 @@ requests==2.32.3
 tiktoken==0.8.0
 fastembed==0.3.6
 httpx
+
+# Reranking and enhanced retrieval
+sentence-transformers==2.7.0

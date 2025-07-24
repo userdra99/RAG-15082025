@@ -9,7 +9,8 @@
       "Bash(cp:*)",
       "WebFetch(domain:docs.llamaindex.ai)",
       "Bash(chmod:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(docker volume:*)"
     ],
     "deny": []
   }

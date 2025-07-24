@@ -17,6 +17,7 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from llama_index.llms.openai import OpenAI
 from llama_index.readers.file import PDFReader, DocxReader
+from llama_index.core.postprocessor import SentenceTransformerRerank
 
 from docling.document_converter import DocumentConverter
 from docling.datamodel.base_models import InputFormat
@@ -53,14 +54,22 @@ if 'index' not in st.session_state:
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 
-class ExcelReader:
-    """Custom Excel reader that converts each sheet to markdown"""
+class DoclingExcelReader:
+    """Enhanced Excel reader using Docling with contextual chunking"""
     
     def load_data(self, file_path: str) -> List[Document]:
-        """Load Excel file and convert each sheet to a document"""
+        """Load Excel file and create contextual chunks"""
         documents = []
         
         try:
+            # Use LlamaIndex's SentenceSplitter for contextual chunking
+            from llama_index.core.node_parser import SentenceSplitter
+            text_splitter = SentenceSplitter(
+                chunk_size=512,
+                chunk_overlap=50,
+                paragraph_separator="\n\n"
+            )
+            
             # Read all sheets
             excel_file = pd.ExcelFile(file_path)
             
@@ -72,16 +81,22 @@ class ExcelReader:
                 markdown_content = f"# Sheet: {sheet_name}\n\n"
                 markdown_content += df.to_markdown(index=False)
                 
-                # Create document
-                doc = Document(
-                    text=markdown_content,
-                    metadata={
-                        "file_name": os.path.basename(file_path),
-                        "sheet_name": sheet_name,
-                        "source": file_path
-                    }
-                )
-                documents.append(doc)
+                # Create chunks with context
+                chunks = text_splitter.split_text(markdown_content)
+                
+                for i, chunk_text in enumerate(chunks):
+                    doc = Document(
+                        text=chunk_text,
+                        metadata={
+                            "file_name": os.path.basename(file_path),
+                            "sheet_name": sheet_name,
+                            "source": file_path,
+                            "chunk_id": i,
+                            "chunk_type": "contextual",
+                            "chunk_size": len(chunk_text)
+                        }
+                    )
+                    documents.append(doc)
                 
         except Exception as e:
             logger.error(f"Error reading Excel file {file_path}: {e}")
@@ -89,7 +104,7 @@ class ExcelReader:
         return documents
 
 class DoclingPDFReader:
-    """Enhanced PDF reader using Docling for complex layouts"""
+    """Enhanced PDF reader using Docling for complex layouts with contextual chunking"""
     
     def __init__(self):
         pipeline_options = PdfPipelineOptions()
@@ -98,20 +113,42 @@ class DoclingPDFReader:
         self.converter = DocumentConverter()
     
     def load_data(self, file_path: str) -> List[Document]:
-        """Load PDF using Docling for better text extraction"""
+        """Load PDF using Docling with contextual chunking"""
         try:
             conv_result = self.converter.convert(file_path)
-            markdown_content = conv_result.document.export_to_markdown()
+            doc = conv_result.document
             
-            doc = Document(
-                text=markdown_content,
-                metadata={
-                    "file_name": os.path.basename(file_path),
-                    "source": file_path,
-                    "type": "pdf"
-                }
+            # Use LlamaIndex's SentenceSplitter for contextual chunking
+            from llama_index.core.node_parser import SentenceSplitter
+            text_splitter = SentenceSplitter(
+                chunk_size=512,
+                chunk_overlap=50,
+                paragraph_separator="\n\n"
             )
-            return [doc]
+            
+            # Convert docling doc to text and split
+            full_text = doc.export_to_markdown()
+            
+            # Create chunks with context
+            chunks = text_splitter.split_text(full_text)
+            
+            documents = []
+            for i, chunk_text in enumerate(chunks):
+                doc = Document(
+                    text=chunk_text,
+                    metadata={
+                        "file_name": os.path.basename(file_path),
+                        "source": file_path,
+                        "type": "pdf",
+                        "chunk_id": i,
+                        "chunk_type": "contextual",
+                        "chunk_size": len(chunk_text)
+                    }
+                )
+                documents.append(doc)
+            
+            logger.info(f"Created {len(documents)} contextual chunks from {file_path}")
+            return documents
             
         except Exception as e:
             logger.error(f"Error processing PDF {file_path} with Docling: {e}")
@@ -120,26 +157,48 @@ class DoclingPDFReader:
             return reader.load_data(file_path)
 
 class DoclingDocxReader:
-    """Enhanced DOCX reader using Docling"""
+    """Enhanced DOCX reader using Docling with contextual chunking"""
     
     def __init__(self):
         self.converter = DocumentConverter()
     
     def load_data(self, file_path: str) -> List[Document]:
-        """Load DOCX using Docling"""
+        """Load DOCX using Docling with contextual chunking"""
         try:
             conv_result = self.converter.convert(file_path)
-            markdown_content = conv_result.document.export_to_markdown()
+            doc = conv_result.document
             
-            doc = Document(
-                text=markdown_content,
-                metadata={
-                    "file_name": os.path.basename(file_path),
-                    "source": file_path,
-                    "type": "docx"
-                }
+            # Use LlamaIndex's SentenceSplitter for contextual chunking
+            from llama_index.core.node_parser import SentenceSplitter
+            text_splitter = SentenceSplitter(
+                chunk_size=512,
+                chunk_overlap=50,
+                paragraph_separator="\n\n"
             )
-            return [doc]
+            
+            # Convert docling doc to text and split
+            full_text = doc.export_to_markdown()
+            
+            # Create chunks with context
+            chunks = text_splitter.split_text(full_text)
+            
+            documents = []
+            for i, chunk_text in enumerate(chunks):
+                doc = Document(
+                    text=chunk_text,
+                    metadata={
+                        "file_name": os.path.basename(file_path),
+                        "source": file_path,
+                        "type": "docx",
+                        "chunk_id": i,
+                        "chunk_type": "contextual",
+                        "chunk_size": len(chunk_text)
+                    }
+                )
+                documents.append(doc)
+            
+            logger.info(f"Created {len(documents)} contextual chunks from {file_path}")
+            return documents
             
         except Exception as e:
             logger.error(f"Error processing DOCX {file_path} with Docling: {e}")
@@ -176,14 +235,12 @@ def initialize_system():
             api_base: str = Field(default_factory=lambda: os.environ.get("OPENAI_API_BASE", "http://nginx:80/v1"), description="API base URL")
             api_key: str = Field(default_factory=lambda: os.environ.get("OPENAI_API_KEY", "sk-12345"), description="API key")
             embed_batch_size: int = Field(default=5, description="Batch size for embeddings")
-            vector_type: str = Field(default="dense", description="Vector type: dense or late")
             def __init__(
                 self,
                 model_name: str = "jina-embeddings-v4",
                 api_base: str = None,
                 api_key: str = None,
                 embed_batch_size: int = 10,
-                vector_type: str = "dense",
                 **kwargs
             ):
                 if api_base is None:
@@ -195,7 +252,6 @@ def initialize_system():
                     api_base=api_base,
                     api_key=api_key,
                     embed_batch_size=embed_batch_size,
-                    vector_type=vector_type,
                     **kwargs
                 )
             
@@ -237,8 +293,7 @@ def initialize_system():
                     payload = {
                         "model": self.model_name,
                         "input": batch,
-                        "encoding_format": "float",
-                        "vector_type": self.vector_type
+                        "encoding_format": "float"
                     }
                     
                     try:
@@ -270,7 +325,7 @@ def initialize_system():
             vector_type="dense"
         )
         
-        # Configure text splitter
+        # Configure text splitter - will be handled by docling contextual chunking
         Settings.text_splitter = SentenceSplitter(
             chunk_size=1024,
             chunk_overlap=200
@@ -350,12 +405,12 @@ def load_documents(data_dir: str) -> List[Document]:
     
     # Load Excel files
     if xlsx_files:
-        excel_reader = ExcelReader()
+        excel_reader = DoclingExcelReader()
         for xlsx_file in xlsx_files:
             try:
                 docs = excel_reader.load_data(str(xlsx_file))
                 documents.extend(docs)
-                logger.info(f"Loaded {len(docs)} documents from {xlsx_file}")
+                logger.info(f"Loaded {len(docs)} contextual chunks from {xlsx_file}")
             except Exception as e:
                 st.error(f"Error loading Excel {xlsx_file}: {e}")
     
@@ -496,69 +551,134 @@ def main():
         if hasattr(st.session_state, 'qdrant_client'):
             collection_exists = check_collection_exists(st.session_state.qdrant_client)
         
-        # Debug logging
-        logger.info(f"Session state initialized: {st.session_state.initialized}")
-        logger.info(f"Has index: {hasattr(st.session_state, 'index')}")
-        logger.info(f"Index exists: {st.session_state.index if hasattr(st.session_state, 'index') else 'No index'}")
-        logger.info(f"Collection exists: {collection_exists}")
+        # Create three columns: main content, knowledge base sidebar, and chat history
+        col_main, col_kb, col_chat = st.columns([3, 1, 1])
         
-        if hasattr(st.session_state, 'index') and st.session_state.index and collection_exists:
-            logger.info("Showing query interface")
-            st.header("💬 Ask Questions")
+        with col_kb:
+            st.header("📊 Knowledge Base")
             
-            # Query input
-            query = st.text_input("Enter your question:", placeholder="Ask about the documents...")
-            
-            if query:
-                with st.spinner("Searching for answers..."):
+            # Display documents in knowledge base
+            if collection_exists and hasattr(st.session_state, 'qdrant_client'):
+                try:
+                    client = st.session_state.qdrant_client
+                    collection_info = client.get_collection("documents")
+                    
+                    st.metric("Total Documents", collection_info.points_count)
+                    
+                    # Get document metadata
                     try:
-                        # Create query engine with hybrid search
-                        query_engine = st.session_state.index.as_query_engine(
-                            vector_store_query_mode="hybrid",
-                            alpha=0.5,  # Balance between keyword and vector search
-                            similarity_top_k=5
+                        scroll_result = client.scroll(
+                            collection_name="documents",
+                            limit=100,
+                            with_payload=True
                         )
                         
-                        # Execute query
-                        response = query_engine.query(query)
+                        documents = {}
+                        for point in scroll_result[0]:
+                            file_name = point.payload.get('file_name', 'Unknown')
+                            if file_name not in documents:
+                                documents[file_name] = {
+                                    'count': 0,
+                                    'type': point.payload.get('type', 'document'),
+                                    'source': point.payload.get('source', 'unknown')
+                                }
+                            documents[file_name]['count'] += 1
                         
-                        # Display answer
-                        st.markdown("### Answer:")
-                        st.markdown(response.response)
-                        
-                        # Display source documents
-                        with st.expander("📄 View Source Documents"):
-                            for node in response.source_nodes:
-                                col1, col2 = st.columns([3, 1])
-                                with col1:
-                                    st.markdown(f"**{node.metadata.get('file_name', 'Unknown')}**")
-                                    st.markdown(node.metadata.get('sheet_name', ''))
-                                    st.text(node.text[:500] + "..." if len(node.text) > 500 else node.text)
-                                with col2:
-                                    st.caption(f"Score: {node.score:.3f}")
-                        
-                        # Add to chat history
-                        if 'chat_history' not in st.session_state:
-                            st.session_state.chat_history = []
-                        st.session_state.chat_history.append({
-                            "question": query,
-                            "answer": response.response
-                        })
-                        
+                        if documents:
+                            st.subheader("📄 Documents")
+                            for file_name, info in documents.items():
+                                with st.expander(f"📋 {file_name}"):
+                                    st.write(f"**Type:** {info['type']}")
+                                    st.write(f"**Chunks:** {info['count']}")
+                        else:
+                            st.info("No documents found in knowledge base")
+                            
                     except Exception as e:
-                        st.error(f"Error processing query: {e}")
+                        st.error(f"Error loading documents: {e}")
+                
+                except Exception as e:
+                    st.error(f"Error accessing collection: {e}")
+            else:
+                st.info("📁 Upload documents to populate knowledge base")
+        
+        with col_chat:
+            # Chat History Panel
+            st.header("📝 Chat History")
             
-            # Display chat history
+            # Collapsible chat history
             if 'chat_history' in st.session_state and st.session_state.chat_history:
-                st.header("📝 Chat History")
-                for chat in reversed(st.session_state.chat_history):
-                    with st.container():
-                        st.markdown(f"**Q:** {chat['question']}")
-                        st.markdown(f"**A:** {chat['answer']}")
+                with st.expander("💬 View Conversations", expanded=True):
+                    for idx, chat in enumerate(reversed(st.session_state.chat_history)):
+                        st.markdown(f"**Q{len(st.session_state.chat_history)-idx}:** {chat['question']}")
+                        st.markdown(f"**A{len(st.session_state.chat_history)-idx}:** {chat['answer'][:200]}..." if len(chat['answer']) > 200 else f"**A{len(st.session_state.chat_history)-idx}:** {chat['answer']}")
                         st.divider()
-        else:
-            logger.info("Not showing query interface - conditions not met")
-            st.info("📁 Please upload documents to get started.")
+                
+                if st.button("🗑️ Clear History", key="clear_history"):
+                    st.session_state.chat_history = []
+                    st.rerun()
+            else:
+                st.info("No conversation history yet")
+        
+        with col_main:
+            # Debug logging
+            logger.info(f"Session state initialized: {st.session_state.initialized}")
+            logger.info(f"Has index: {hasattr(st.session_state, 'index')}")
+            logger.info(f"Index exists: {st.session_state.index if hasattr(st.session_state, 'index') else 'No index'}")
+            logger.info(f"Collection exists: {collection_exists}")
+            
+            if hasattr(st.session_state, 'index') and st.session_state.index and collection_exists:
+                logger.info("Showing query interface")
+                st.header("💬 Ask Questions")
+                
+                # Query input
+                query = st.text_input("Enter your question:", placeholder="Ask about the documents...")
+                
+                if query:
+                    with st.spinner("Searching for answers..."):
+                        try:
+                            # Create query engine with hybrid search and reranking
+                            reranker = SentenceTransformerRerank(
+                                model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+                                top_n=3
+                            )
+                            
+                            query_engine = st.session_state.index.as_query_engine(
+                                vector_store_query_mode="hybrid",
+                                alpha=0.5,  # Balance between keyword and vector search
+                                similarity_top_k=10,  # Retrieve more initially for reranking
+                                node_postprocessors=[reranker]
+                            )
+                            
+                            # Execute query
+                            response = query_engine.query(query)
+                            
+                            # Display answer
+                            st.markdown("### Answer:")
+                            st.markdown(response.response)
+                            
+                            # Display source documents
+                            with st.expander("📄 View Source Documents"):
+                                for node in response.source_nodes:
+                                    col1, col2 = st.columns([3, 1])
+                                    with col1:
+                                        st.markdown(f"**{node.metadata.get('file_name', 'Unknown')}**")
+                                        st.markdown(node.metadata.get('sheet_name', ''))
+                                        st.text(node.text[:500] + "..." if len(node.text) > 500 else node.text)
+                                    with col2:
+                                        st.caption(f"Score: {node.score:.3f}")
+                            
+                            # Add to chat history
+                            st.session_state.chat_history.append({
+                                "question": query,
+                                "answer": response.response,
+                                "timestamp": time.strftime("%H:%M:%S")
+                            })
+                            
+                        except Exception as e:
+                            st.error(f"Error processing query: {e}")
+            else:
+                logger.info("Not showing query interface - conditions not met")
+                st.info("📁 Please upload documents to get started.")
     
     elif not st.session_state.initialized:
         st.info("🚀 System is initializing... Please wait.")
