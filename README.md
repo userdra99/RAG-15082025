@@ -6,6 +6,7 @@ A prototype Retrieval-Augmented Generation (RAG) system using Jina Embeddings V4
 
 - **Jina Embeddings V4**: 8192 token context, 2048D vectors, multilingual support
 - **LlamaIndex Integration**: OpenAI-compatible API with vLLM backend
+- **Docling Integration**: Advanced PDF/DOCX processing with OCR and table extraction
 - **Enhanced Document Processing**: PDF, DOCX, Excel with contextual chunking
 - **Advanced Reranking**: Cross-encoder semantic reranking (ms-marco-MiniLM-L-6-v2)
 - **Vector Database**: Qdrant with hybrid search (dense + sparse)
