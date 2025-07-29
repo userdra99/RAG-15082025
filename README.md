@@ -26,7 +26,7 @@ A prototype Retrieval-Augmented Generation (RAG) system using Jina Embeddings V4
 
 ### 1. Clone and Setup
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/userdra99/rag-zero2
 cd rag-zero2
 ```
 
