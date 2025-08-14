@@ -18,17 +18,16 @@ COPY . .
 # Create data directory
 RUN mkdir -p /app/data
 
-# Expose Streamlit port
-EXPOSE 8501
+# Expose Flask port
+EXPOSE 5000
 
-# Set Streamlit configuration
-ENV STREAMLIT_SERVER_PORT=8501
-ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
-ENV STREAMLIT_SERVER_HEADLESS=true
-ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+# Set Flask configuration
+ENV FLASK_APP=main.py
+ENV FLASK_ENV=production
+ENV PYTHONUNBUFFERED=1
 
 # Health check
-HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health
+HEALTHCHECK CMD curl --fail http://localhost:5000/health
 
-# Run Streamlit app
-CMD ["streamlit", "run", "main.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# Run Flask app
+CMD ["python", "main.py"]

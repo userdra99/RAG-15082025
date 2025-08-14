@@ -6,7 +6,8 @@ import json
 from pathlib import Path
 from typing import List, Dict, Any
 import pandas as pd
-import streamlit as st
+from flask import Flask, render_template, request, jsonify, flash, redirect, url_for, session
+from werkzeug.utils import secure_filename
 
 from llama_index.core import (
     VectorStoreIndex, 
@@ -27,7 +28,6 @@ from docling.datamodel.pipeline_options import PdfPipelineOptions
 
 import qdrant_client
 
-# Configure custom OpenAI-compatible model
 CUSTOM_MODEL_CONFIG = {
     "unsloth/Llama-3.2-3B-Instruct": {
         "context_window": 8192,
@@ -37,26 +37,26 @@ CUSTOM_MODEL_CONFIG = {
     }
 }
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Page configuration
-st.set_page_config(
-    page_title="RAG Document Assistant",
-    page_icon="📚",
-    layout="wide"
-)
+app = Flask(__name__)
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+app.config['UPLOAD_FOLDER'] = '/app/data'
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
+app.config['ALLOWED_EXTENSIONS'] = {'pdf', 'docx', 'xlsx'}
 
-# Initialize session state
-if 'initialized' not in st.session_state:
-    st.session_state.initialized = False
-if 'index' not in st.session_state:
-    st.session_state.index = None
-if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
-if 'last_document_hash' not in st.session_state:
-    st.session_state.last_document_hash = None
+# Global variables for RAG system
+rag_system = {
+    'initialized': False,
+    'index': None,
+    'client': None,
+    'storage_context': None
+}
+
+def allowed_file(filename):
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
 class DoclingExcelReader:
     """Enhanced Excel reader using Docling with contextual chunking"""
@@ -66,7 +66,6 @@ class DoclingExcelReader:
         documents = []
         
         try:
-            # Use LlamaIndex's SentenceSplitter for contextual chunking
             from llama_index.core.node_parser import SentenceSplitter
             text_splitter = SentenceSplitter(
                 chunk_size=512,
@@ -74,18 +73,14 @@ class DoclingExcelReader:
                 paragraph_separator="\n\n"
             )
             
-            # Read all sheets
             excel_file = pd.ExcelFile(file_path)
             
             for sheet_name in excel_file.sheet_names:
-                # Read sheet into DataFrame
                 df = pd.read_excel(file_path, sheet_name=sheet_name)
                 
-                # Convert to markdown
                 markdown_content = f"# Sheet: {sheet_name}\n\n"
                 markdown_content += df.to_markdown(index=False)
                 
-                # Create chunks with context
                 chunks = text_splitter.split_text(markdown_content)
                 
                 for i, chunk_text in enumerate(chunks):
@@ -122,7 +117,6 @@ class DoclingPDFReader:
             conv_result = self.converter.convert(file_path)
             doc = conv_result.document
             
-            # Use LlamaIndex's SentenceSplitter for contextual chunking
             from llama_index.core.node_parser import SentenceSplitter
             text_splitter = SentenceSplitter(
                 chunk_size=512,
@@ -130,10 +124,7 @@ class DoclingPDFReader:
                 paragraph_separator="\n\n"
             )
             
-            # Convert docling doc to text and split
             full_text = doc.export_to_markdown()
-            
-            # Create chunks with context
             chunks = text_splitter.split_text(full_text)
             
             documents = []
@@ -156,7 +147,6 @@ class DoclingPDFReader:
             
         except Exception as e:
             logger.error(f"Error processing PDF {file_path} with Docling: {e}")
-            # Fallback to simple PDF reader
             reader = PDFReader()
             return reader.load_data(file_path)
 
@@ -172,7 +162,6 @@ class DoclingDocxReader:
             conv_result = self.converter.convert(file_path)
             doc = conv_result.document
             
-            # Use LlamaIndex's SentenceSplitter for contextual chunking
             from llama_index.core.node_parser import SentenceSplitter
             text_splitter = SentenceSplitter(
                 chunk_size=512,
@@ -180,10 +169,7 @@ class DoclingDocxReader:
                 paragraph_separator="\n\n"
             )
             
-            # Convert docling doc to text and split
             full_text = doc.export_to_markdown()
-            
-            # Create chunks with context
             chunks = text_splitter.split_text(full_text)
             
             documents = []
@@ -206,150 +192,67 @@ class DoclingDocxReader:
             
         except Exception as e:
             logger.error(f"Error processing DOCX {file_path} with Docling: {e}")
-            # Fallback to simple DOCX reader
             reader = DocxReader()
             return reader.load_data(file_path)
 
-
-
-@st.cache_resource
 def initialize_system():
     """Initialize the RAG system with vLLM and Qdrant"""
     try:
-        # Use environment variables for API base and key
         api_base = os.environ.get("OPENAI_API_BASE", "http://nginx:80/v1")
         api_key = os.environ.get("OPENAI_API_KEY", "sk-12345")
-        # Configure LlamaIndex settings
-        # Configure OpenAI client for vLLM with OpenAI-compatible API
-        # Use a compatible model name that OpenAI client accepts
-        Settings.llm = OpenAI(
-            model="gpt-3.5-turbo",
+        
+        # Use OpenAI-like client for vLLM endpoints
+        from llama_index.llms.openai_like import OpenAILike
+        
+        Settings.llm = OpenAILike(
+            model="meta-llama/Llama-3.1-8B-Instruct",
             api_base=api_base,
             api_key=api_key,
-            max_tokens=512
+            max_new_tokens=512,
+            is_chat_model=True
         )
-        # Use jinaai/jina-embeddings-v4-vllm-retrieval model with vLLM OpenAI-compatible API
-        # This connects to the vLLM embedding service running in Docker
-        from llama_index.core.embeddings import BaseEmbedding
-        import httpx
-        from pydantic import Field
-        class vLLMEmbedding(BaseEmbedding):
-            """Custom embedding class for vLLM with jinaai/jina-embeddings-v4-vllm-retrieval"""
-            model_name: str = Field(default="jina-embeddings-v4", description="Model name")
-            api_base: str = Field(default_factory=lambda: os.environ.get("OPENAI_API_BASE", "http://nginx:80/v1"), description="API base URL")
-            api_key: str = Field(default_factory=lambda: os.environ.get("OPENAI_API_KEY", "sk-12345"), description="API key")
-            embed_batch_size: int = Field(default=5, description="Batch size for embeddings")
-            def __init__(
-                self,
-                model_name: str = "jina-embeddings-v4",
-                api_base: str = None,
-                api_key: str = None,
-                embed_batch_size: int = 10,
-                **kwargs
-            ):
-                if api_base is None:
-                    api_base = os.environ.get("OPENAI_API_BASE", "http://nginx:80/v1")
-                if api_key is None:
-                    api_key = os.environ.get("OPENAI_API_KEY", "sk-12345")
-                super().__init__(
-                    model_name=model_name,
-                    api_base=api_base,
-                    api_key=api_key,
-                    embed_batch_size=embed_batch_size,
-                    **kwargs
-                )
-            
-            @property
-            def headers(self):
-                """Get headers for API requests"""
-                return {
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json"
-                }
-            
-            def _get_query_embedding(self, query: str) -> List[float]:
-                """Get embedding for a single query"""
-                return self._get_text_embeddings([query])[0]
-            
-            def _get_text_embedding(self, text: str) -> List[float]:
-                """Get embedding for a single text"""
-                return self._get_text_embeddings([text])[0]
-            
-            async def _aget_query_embedding(self, query: str) -> List[float]:
-                """Get embedding for a single query (async)"""
-                embeddings = await self._aget_text_embeddings([query])
-                return embeddings[0]
-            
-            async def _aget_text_embeddings(self, texts: List[str]) -> List[List[float]]:
-                """Get embeddings for a list of texts (async)"""
-                # For now, use the sync version since we're not doing async HTTP calls
-                return self._get_text_embeddings(texts)
-            
-            def _get_text_embeddings(self, texts: List[str]) -> List[List[float]]:
-                """Get embeddings for a list of texts"""
-                url = f"{self.api_base}/embeddings"
-                
-                embeddings = []
-                # Process in batches
-                for i in range(0, len(texts), self.embed_batch_size):
-                    batch = texts[i:i + self.embed_batch_size]
-                    
-                    payload = {
-                        "model": self.model_name,
-                        "input": batch,
-                        "encoding_format": "float"
-                    }
-                    
-                    try:
-                        response = httpx.post(
-                            url, 
-                            json=payload, 
-                            headers=self.headers,
-                            timeout=60.0
-                        )
-                        response.raise_for_status()
-                        
-                        data = response.json()
-                        batch_embeddings = [item["embedding"] for item in data["data"]]
-                        embeddings.extend(batch_embeddings)
-                        
-                    except Exception as e:
-                        logger.error(f"Error getting embeddings: {e}")
-                        raise Exception(f"Error getting embeddings from vLLM: {e}")
-                
-                return embeddings
         
-        # Use jina-embeddings-v4-vllm-retrieval as the embedding model
-        model_name = os.environ.get("EMBEDDING_MODEL", "jina-embeddings-v4")
-        Settings.embed_model = vLLMEmbedding(
-            model_name=model_name,
+        # Use OpenAI-like embedding client for custom models
+        from llama_index.embeddings.openai_like import OpenAILikeEmbedding
+        
+        model_name = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text-v1")
+        
+        # Use OpenAI-like client which accepts any model name
+        Settings.embed_model = OpenAILikeEmbedding(
+            model_name=model_name, 
             api_base=api_base,
             api_key=api_key,
-            embed_batch_size=5,
-            vector_type="dense"
+            embed_batch_size=10
         )
         
-        # Configure text splitter - will be handled by docling contextual chunking
         Settings.text_splitter = SentenceSplitter(
             chunk_size=1024,
             chunk_overlap=200
         )
         
-        # Initialize Qdrant client
         client = qdrant_client.QdrantClient(
-            host="qdrant-2",
+            host="qdrant",
             port=6333
         )
         
-        # Create vector store
+        # Create collection if it doesn't exist  
+        try:
+            client.get_collection("documents")
+            logger.info("Collection 'documents' already exists")
+        except Exception:
+            from qdrant_client.models import Distance, VectorParams
+            client.create_collection(
+                collection_name="documents",
+                vectors_config=VectorParams(size=768, distance=Distance.COSINE)
+            )
+            logger.info("Created new collection 'documents' with 768-dimensional vectors")
+        
         vector_store = QdrantVectorStore(
             client=client,
-            collection_name="documents",
-            enable_hybrid=True
+            collection_name="documents"
         )
-        logger.info("Created Qdrant vector store with hybrid search enabled")
+        logger.info("Created Qdrant vector store")
         
-        # Create storage context
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
         logger.info("Created storage context")
         
@@ -357,13 +260,11 @@ def initialize_system():
         
     except Exception as e:
         logger.error(f"Error initializing system: {e}")
-        st.error(f"Failed to initialize system: {e}")
         return None, None
 
 def check_collection_exists(client, collection_name: str = "documents") -> bool:
     """Check if a Qdrant collection exists"""
     try:
-        # Try to get the specific collection
         collection_info = client.get_collection(collection_name)
         logger.info(f"Collection '{collection_name}' exists with status: {collection_info.status}")
         return True
@@ -380,12 +281,10 @@ def load_documents(data_dir: str) -> List[Document]:
         data_path.mkdir(parents=True, exist_ok=True)
         return documents
     
-    # Create hash storage directory
     hash_dir = data_path / ".hashes"
     hash_dir.mkdir(exist_ok=True)
     hash_file = hash_dir / "file_hashes.json"
     
-    # Load existing hashes
     existing_hashes = {}
     if hash_file.exists():
         try:
@@ -394,20 +293,16 @@ def load_documents(data_dir: str) -> List[Document]:
         except Exception as e:
             logger.warning(f"Could not load existing hashes: {e}")
     
-    # Calculate current file hashes
     current_hashes = {}
     processed_files = []
     
-    # Supported file extensions
     supported_files = []
     supported_files.extend(list(data_path.glob("*.pdf")))
     supported_files.extend(list(data_path.glob("*.docx")))
     supported_files.extend(list(data_path.glob("*.xlsx")))
     
-    # Calculate hashes for all supported files
     for file_path in supported_files:
         try:
-            # Calculate MD5 hash of file content
             with open(file_path, 'rb') as f:
                 file_hash = hashlib.md5(f.read()).hexdigest()
             current_hashes[str(file_path)] = file_hash
@@ -415,7 +310,6 @@ def load_documents(data_dir: str) -> List[Document]:
             logger.error(f"Error calculating hash for {file_path}: {e}")
             current_hashes[str(file_path)] = "error"
     
-    # Track which files need processing
     files_to_process = []
     for file_path, current_hash in current_hashes.items():
         file_path_obj = Path(file_path)
@@ -424,18 +318,14 @@ def load_documents(data_dir: str) -> List[Document]:
         else:
             logger.info(f"Skipping unchanged file: {file_path_obj.name}")
     
-    # Process only changed or new files
     if not files_to_process:
         logger.info("No new or changed files to process")
-        # Load existing documents from vector store if available
         return documents
     
-    # Separate files by type for processing
     pdf_files = [f for f in files_to_process if f.suffix.lower() == '.pdf']
     docx_files = [f for f in files_to_process if f.suffix.lower() == '.docx']
     xlsx_files = [f for f in files_to_process if f.suffix.lower() == '.xlsx']
     
-    # Load PDFs
     if pdf_files:
         pdf_reader = DoclingPDFReader()
         for pdf_file in pdf_files:
@@ -445,9 +335,8 @@ def load_documents(data_dir: str) -> List[Document]:
                 logger.info(f"Loaded {len(docs)} documents from {pdf_file}")
                 processed_files.append(str(pdf_file))
             except Exception as e:
-                st.error(f"Error loading PDF {pdf_file}: {e}")
+                logger.error(f"Error loading PDF {pdf_file}: {e}")
     
-    # Load DOCX files
     if docx_files:
         docx_reader = DoclingDocxReader()
         for docx_file in docx_files:
@@ -457,9 +346,8 @@ def load_documents(data_dir: str) -> List[Document]:
                 logger.info(f"Loaded {len(docs)} documents from {docx_file}")
                 processed_files.append(str(docx_file))
             except Exception as e:
-                st.error(f"Error loading DOCX {docx_file}: {e}")
+                logger.error(f"Error loading DOCX {docx_file}: {e}")
     
-    # Load Excel files
     if xlsx_files:
         excel_reader = DoclingExcelReader()
         for xlsx_file in xlsx_files:
@@ -469,19 +357,15 @@ def load_documents(data_dir: str) -> List[Document]:
                 logger.info(f"Loaded {len(docs)} contextual chunks from {xlsx_file}")
                 processed_files.append(str(xlsx_file))
             except Exception as e:
-                st.error(f"Error loading Excel {xlsx_file}: {e}")
+                logger.error(f"Error loading Excel {xlsx_file}: {e}")
     
-    # Update hash file with processed files
     if processed_files or existing_hashes != current_hashes:
-        # Update existing hashes with current hashes for processed files
         for file_path, current_hash in current_hashes.items():
             if file_path in [str(p) for p in processed_files]:
                 existing_hashes[file_path] = current_hash
             elif file_path not in existing_hashes:
-                # Add new files that weren't processed (e.g., due to errors)
                 existing_hashes[file_path] = current_hash
         
-        # Remove hashes for files that no longer exist
         files_to_remove = [f for f in existing_hashes.keys() if not Path(f).exists()]
         for file_to_remove in files_to_remove:
             del existing_hashes[file_to_remove]
@@ -498,46 +382,29 @@ def load_documents(data_dir: str) -> List[Document]:
 def create_or_load_index(storage_context, documents: List[Document] = None) -> VectorStoreIndex:
     """Create or load existing index"""
     try:
-        # Check if collection exists first
-        client = storage_context.vector_store.client
-        try:
-            client.get_collection("documents")
-            collection_exists = True
-            logger.info("Collection 'documents' exists, attempting to load index...")
-        except Exception:
-            collection_exists = False
-            logger.info("Collection 'documents' does not exist, will create new index...")
+        # Check if collection exists and has documents
+        collection_exists = check_collection_exists(rag_system['client'])
         
         if collection_exists:
-            # Try to load existing index
-            logger.info("Attempting to load existing index...")
-            index = VectorStoreIndex.from_vector_store(
-                storage_context.vector_store
-            )
-            logger.info("Successfully loaded existing index")
-            return index
-        else:
-            # Collection doesn't exist, create new index
-            if documents and len(documents) > 0:
-                logger.info(f"Creating new index with {len(documents)} documents")
-                try:
-                    logger.info("Starting index creation...")
-                    index = VectorStoreIndex.from_documents(
-                        documents,
-                        storage_context=storage_context
+            try:
+                collection_info = rag_system['client'].get_collection("documents")
+                if collection_info.points_count > 0:
+                    logger.info(f"Loading existing index with {collection_info.points_count} documents...")
+                    # Create fresh vector store with proper client reference
+                    vector_store = QdrantVectorStore(
+                        client=rag_system['client'],
+                        collection_name="documents"
                     )
-                    logger.info("Successfully created new index")
+                    storage_context.vector_store = vector_store
+                    index = VectorStoreIndex.from_vector_store(vector_store)
+                    logger.info("Successfully loaded existing index")
                     return index
-                except Exception as create_error:
-                    logger.error(f"Error creating index: {create_error}")
-                    return None
-            else:
-                logger.info("No documents available to create index")
-                return None
-                
-    except Exception as e:
-        logger.info(f"Could not load existing index: {e}")
-        # Create new index if documents are provided
+                else:
+                    logger.info("Collection exists but is empty")
+            except Exception as e:
+                logger.info(f"Could not load existing index: {e}")
+        
+        # If loading failed or no collection, try to create new index with documents
         if documents and len(documents) > 0:
             logger.info(f"Creating new index with {len(documents)} documents")
             try:
@@ -554,213 +421,219 @@ def create_or_load_index(storage_context, documents: List[Document] = None) -> V
         else:
             logger.info("No documents available to create index")
             return None
+                
+    except Exception as e:
+        logger.error(f"Unexpected error in create_or_load_index: {e}")
+        return None
 
-def main():
-    st.title("📚 RAG Document Assistant")
-    st.markdown("Upload documents and ask questions about their content")
+@app.route('/')
+def index():
+    """Main page"""
+    collection_exists = False
+    documents = {}
+    total_docs = 0
     
-    # Sidebar
-    with st.sidebar:
-        st.header("📁 Document Management")
+    if rag_system['initialized'] and rag_system['client']:
+        collection_exists = check_collection_exists(rag_system['client'])
         
-        # File uploader
-        uploaded_files = st.file_uploader(
-            "Upload documents",
-            type=['pdf', 'docx', 'xlsx'],
-            accept_multiple_files=True
+        if collection_exists:
+            try:
+                collection_info = rag_system['client'].get_collection("documents")
+                total_docs = collection_info.points_count
+                
+                scroll_result = rag_system['client'].scroll(
+                    collection_name="documents",
+                    limit=100,
+                    with_payload=True
+                )
+                
+                for point in scroll_result[0]:
+                    file_name = point.payload.get('file_name', 'Unknown')
+                    if file_name not in documents:
+                        documents[file_name] = {
+                            'count': 0,
+                            'type': point.payload.get('type', 'document'),
+                            'source': point.payload.get('source', 'unknown')
+                        }
+                    documents[file_name]['count'] += 1
+                    
+            except Exception as e:
+                logger.error(f"Error accessing collection: {e}")
+    
+    return render_template('index.html', 
+                         initialized=rag_system['initialized'],
+                         collection_exists=collection_exists,
+                         documents=documents,
+                         total_docs=total_docs,
+                         chat_history=session.get('chat_history', []))
+
+@app.route('/initialize', methods=['POST'])
+def initialize():
+    """Initialize the RAG system"""
+    if not rag_system['initialized']:
+        client, storage_context = initialize_system()
+        if storage_context:
+            rag_system['client'] = client
+            rag_system['storage_context'] = storage_context
+            
+            documents = load_documents(app.config['UPLOAD_FOLDER'])
+            index = create_or_load_index(storage_context, documents)
+            
+            if index:
+                rag_system['index'] = index
+                rag_system['initialized'] = True
+                message = f"System initialized with {len(documents)} documents" if documents else "System initialized"
+                return jsonify({'success': True, 'message': message})
+            else:
+                rag_system['initialized'] = True
+                return jsonify({'success': True, 'message': 'System initialized without index. Please upload documents.'})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to initialize system'}), 500
+    
+    return jsonify({'success': True, 'message': 'System already initialized'})
+
+@app.route('/upload', methods=['POST'])
+def upload_files():
+    """Handle file uploads - saves files immediately without processing"""
+    if 'files' not in request.files:
+        return jsonify({'success': False, 'error': 'No files provided'}), 400
+    
+    files = request.files.getlist('files')
+    uploaded_files = []
+    
+    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+    
+    for file in files:
+        if file and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(file_path)
+            uploaded_files.append(filename)
+        else:
+            logger.warning(f"Skipped invalid file: {file.filename if file else 'unknown'}")
+    
+    if uploaded_files:
+        return jsonify({
+            'success': True, 
+            'message': f'Successfully uploaded {len(uploaded_files)} files. Use the process endpoint to index them.',
+            'uploaded_files': uploaded_files
+        })
+    
+    return jsonify({'success': False, 'error': 'No valid files uploaded'}), 400
+
+@app.route('/process', methods=['POST'])
+def process_documents():
+    """Process uploaded documents and create/update index"""
+    if not rag_system['initialized']:
+        return jsonify({'success': False, 'error': 'System not initialized'}), 400
+    
+    try:
+        # Process documents in the upload folder
+        documents = load_documents(app.config['UPLOAD_FOLDER'])
+        
+        if documents and rag_system['storage_context']:
+            index = create_or_load_index(rag_system['storage_context'], documents)
+            if index:
+                rag_system['index'] = index
+                return jsonify({
+                    'success': True, 
+                    'message': f'Successfully processed and indexed {len(documents)} document chunks'
+                })
+            else:
+                return jsonify({'success': False, 'error': 'Failed to create index from documents'}), 500
+        else:
+            return jsonify({'success': False, 'error': 'No documents found to process'}), 400
+            
+    except Exception as e:
+        logger.error(f"Error processing documents: {e}")
+        return jsonify({'success': False, 'error': f'Processing failed: {str(e)}'}), 500
+
+@app.route('/query', methods=['POST'])
+def query():
+    """Handle search queries"""
+    data = request.get_json()
+    query_text = data.get('query', '')
+    
+    if not query_text:
+        return jsonify({'success': False, 'error': 'No query provided'}), 400
+    
+    if not rag_system['initialized'] or not rag_system['index']:
+        return jsonify({'success': False, 'error': 'System not initialized or no documents indexed'}), 400
+    
+    try:
+        # Simplified query engine without reranker to test core functionality
+        query_engine = rag_system['index'].as_query_engine(
+            similarity_top_k=5
         )
         
-        if uploaded_files:
-            if st.button("Process Documents"):
-                with st.spinner("Processing documents..."):
-                    # Save uploaded files
-                    data_dir = "/app/data"
-                    os.makedirs(data_dir, exist_ok=True)
-                    
-                    for uploaded_file in uploaded_files:
-                        file_path = os.path.join(data_dir, uploaded_file.name)
-                        with open(file_path, "wb") as f:
-                            f.write(uploaded_file.getbuffer())
-                    
-                    # Load and index documents
-                    documents = load_documents(data_dir)
-                    if documents:
-                        client, storage_context = initialize_system()
-                        if storage_context:
-                            # Store client in session state for collection checks
-                            st.session_state.qdrant_client = client
-                            
-                            index = create_or_load_index(storage_context, documents)
-                            if index:
-                                st.session_state.index = index
-                                st.session_state.initialized = True
-                                st.success(f"Successfully indexed {len(documents)} documents!")
-                                st.rerun()
-                    else:
-                        st.error("No documents found to process")
-    
-    # Initialize system
-    if not st.session_state.initialized:
-        with st.spinner("Initializing system..."):
-            client, storage_context = initialize_system()
-            if storage_context:
-                # Store client in session state for collection checks
-                st.session_state.qdrant_client = client
-                
-                documents = load_documents("/app/data")
-                index = create_or_load_index(storage_context, documents)
-                
-                if index:
-                    st.session_state.index = index
-                    st.session_state.initialized = True
-                    if documents:
-                        st.success(f"Loaded {len(documents)} documents")
-                    else:
-                        st.info("System ready. Please upload documents using the sidebar.")
-                else:
-                    st.session_state.initialized = True  # Mark as initialized even without index
-                    st.info("No documents found. Please upload documents using the sidebar.")
-            else:
-                st.error("Failed to initialize system. Please check the logs.")
-    
-    # Main interface
-    if st.session_state.initialized:
-        # Check if collection exists before allowing queries
-        collection_exists = False
-        if hasattr(st.session_state, 'qdrant_client'):
-            collection_exists = check_collection_exists(st.session_state.qdrant_client)
+        response = query_engine.query(query_text)
         
-        # Create three columns: main content, knowledge base sidebar, and chat history
-        col_main, col_kb, col_chat = st.columns([3, 1, 1])
+        sources = []
+        for node in response.source_nodes:
+            sources.append({
+                'file_name': node.metadata.get('file_name', 'Unknown'),
+                'sheet_name': node.metadata.get('sheet_name', ''),
+                'text': node.text[:500] + "..." if len(node.text) > 500 else node.text,
+                'score': float(node.score) if node.score else 0
+            })
         
-        with col_kb:
-            st.header("📊 Knowledge Base")
-            
-            # Display documents in knowledge base
-            if collection_exists and hasattr(st.session_state, 'qdrant_client'):
-                try:
-                    client = st.session_state.qdrant_client
-                    collection_info = client.get_collection("documents")
-                    
-                    st.metric("Total Documents", collection_info.points_count)
-                    
-                    # Get document metadata
-                    try:
-                        scroll_result = client.scroll(
-                            collection_name="documents",
-                            limit=100,
-                            with_payload=True
-                        )
-                        
-                        documents = {}
-                        for point in scroll_result[0]:
-                            file_name = point.payload.get('file_name', 'Unknown')
-                            if file_name not in documents:
-                                documents[file_name] = {
-                                    'count': 0,
-                                    'type': point.payload.get('type', 'document'),
-                                    'source': point.payload.get('source', 'unknown')
-                                }
-                            documents[file_name]['count'] += 1
-                        
-                        if documents:
-                            st.subheader("📄 Documents")
-                            for file_name, info in documents.items():
-                                with st.expander(f"📋 {file_name}"):
-                                    st.write(f"**Type:** {info['type']}")
-                                    st.write(f"**Chunks:** {info['count']}")
-                        else:
-                            st.info("No documents found in knowledge base")
-                            
-                    except Exception as e:
-                        st.error(f"Error loading documents: {e}")
-                
-                except Exception as e:
-                    st.error(f"Error accessing collection: {e}")
-            else:
-                st.info("📁 Upload documents to populate knowledge base")
+        # Update session chat history
+        if 'chat_history' not in session:
+            session['chat_history'] = []
         
-        with col_chat:
-            # Chat History Panel
-            st.header("📝 Chat History")
-            
-            # Collapsible chat history
-            if 'chat_history' in st.session_state and st.session_state.chat_history:
-                with st.expander("💬 View Conversations", expanded=True):
-                    for idx, chat in enumerate(reversed(st.session_state.chat_history)):
-                        st.markdown(f"**Q{len(st.session_state.chat_history)-idx}:** {chat['question']}")
-                        st.markdown(f"**A{len(st.session_state.chat_history)-idx}:** {chat['answer'][:200]}..." if len(chat['answer']) > 200 else f"**A{len(st.session_state.chat_history)-idx}:** {chat['answer']}")
-                        st.divider()
-                
-                if st.button("🗑️ Clear History", key="clear_history"):
-                    st.session_state.chat_history = []
-                    st.rerun()
-            else:
-                st.info("No conversation history yet")
+        session['chat_history'].append({
+            'question': query_text,
+            'answer': response.response,
+            'timestamp': time.strftime("%H:%M:%S")
+        })
+        session.modified = True
         
-        with col_main:
-            # Debug logging
-            logger.info(f"Session state initialized: {st.session_state.initialized}")
-            logger.info(f"Has index: {hasattr(st.session_state, 'index')}")
-            logger.info(f"Index exists: {st.session_state.index if hasattr(st.session_state, 'index') else 'No index'}")
-            logger.info(f"Collection exists: {collection_exists}")
-            
-            if hasattr(st.session_state, 'index') and st.session_state.index and collection_exists:
-                logger.info("Showing query interface")
-                st.header("💬 Ask Questions")
-                
-                # Query input
-                query = st.text_input("Enter your question:", placeholder="Ask about the documents...")
-                
-                if query:
-                    with st.spinner("Searching for answers..."):
-                        try:
-                            # Create query engine with hybrid search and reranking
-                            reranker = SentenceTransformerRerank(
-                                model="cross-encoder/ms-marco-MiniLM-L-6-v2",
-                                top_n=3
-                            )
-                            
-                            query_engine = st.session_state.index.as_query_engine(
-                                vector_store_query_mode="hybrid",
-                                alpha=0.5,  # Balance between keyword and vector search
-                                similarity_top_k=10,  # Retrieve more initially for reranking
-                                node_postprocessors=[reranker]
-                            )
-                            
-                            # Execute query
-                            response = query_engine.query(query)
-                            
-                            # Display answer
-                            st.markdown("### Answer:")
-                            st.markdown(response.response)
-                            
-                            # Display source documents
-                            with st.expander("📄 View Source Documents"):
-                                for node in response.source_nodes:
-                                    col1, col2 = st.columns([3, 1])
-                                    with col1:
-                                        st.markdown(f"**{node.metadata.get('file_name', 'Unknown')}**")
-                                        st.markdown(node.metadata.get('sheet_name', ''))
-                                        st.text(node.text[:500] + "..." if len(node.text) > 500 else node.text)
-                                    with col2:
-                                        st.caption(f"Score: {node.score:.3f}")
-                            
-                            # Add to chat history
-                            st.session_state.chat_history.append({
-                                "question": query,
-                                "answer": response.response,
-                                "timestamp": time.strftime("%H:%M:%S")
-                            })
-                            
-                        except Exception as e:
-                            st.error(f"Error processing query: {e}")
-            else:
-                logger.info("Not showing query interface - conditions not met")
-                st.info("📁 Please upload documents to get started.")
-    
-    elif not st.session_state.initialized:
-        st.info("🚀 System is initializing... Please wait.")
+        return jsonify({
+            'success': True,
+            'answer': response.response,
+            'sources': sources
+        })
+        
+    except Exception as e:
+        logger.error(f"Error processing query: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
-if __name__ == "__main__":
-    main()
+@app.route('/clear_history', methods=['POST'])
+def clear_history():
+    """Clear chat history"""
+    session['chat_history'] = []
+    session.modified = True
+    return jsonify({'success': True})
+
+@app.route('/health', methods=['GET'])
+def health():
+    """Health check endpoint"""
+    return jsonify({
+        'status': 'healthy',
+        'initialized': rag_system['initialized'],
+        'has_index': rag_system['index'] is not None
+    })
+
+if __name__ == '__main__':
+    # Initialize system on startup without processing documents
+    client, storage_context = initialize_system()
+    if storage_context:
+        rag_system['client'] = client
+        rag_system['storage_context'] = storage_context
+        
+        # Try to load existing index without processing new documents
+        try:
+            index = create_or_load_index(storage_context, [])
+            if index:
+                rag_system['index'] = index
+                rag_system['initialized'] = True
+                logger.info("System initialized with existing index")
+            else:
+                rag_system['initialized'] = True
+                logger.info("System initialized without index - ready for document upload")
+        except Exception as e:
+            logger.info(f"No existing index found: {e}")
+            rag_system['initialized'] = True
+            logger.info("System initialized without index - ready for document upload")
+    
+    app.run(host='0.0.0.0', port=5000, debug=False)

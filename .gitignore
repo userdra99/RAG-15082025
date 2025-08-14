@@ -59,3 +59,17 @@ Dockerfile.vllm.alternative
 # Temporary files
 *.tmp
 *.temp
+
+# Virtual environments (additional)
+app/venv/
+vllm_venv/
+
+# Python additional cache
+pip_log.txt
+app/pip_log.txt
+
+# File processing hashes
+app/data/.hashes/
+
+# Backup files
+*.bak

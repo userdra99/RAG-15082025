@@ -1,0 +1,24 @@
+# Simple vLLM container using official vLLM image
+FROM vllm/vllm-openai:v0.10.0
+
+# Create startup script
+RUN cat <<'EOF' > /start.sh
+#!/bin/bash
+echo "Starting vLLM server..."
+echo "Model: ${MODEL}"
+echo "Port: ${PORT:-8000}"
+echo "Additional args: $@"
+
+# Start vLLM server
+exec /usr/bin/python3 -m vllm.entrypoints.openai.api_server \
+    --model "${MODEL}" \
+    --port "${PORT:-8000}" \
+    "$@"
+EOF
+RUN chmod +x /start.sh
+
+# Expose default port
+EXPOSE 8000
+
+# Set entrypoint
+ENTRYPOINT ["bash", "/start.sh"]

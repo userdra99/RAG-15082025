@@ -3,25 +3,29 @@ services:
   vllm-llm:
     build:
       context: .
-      dockerfile: Dockerfile.vllm
-    container_name: vllm-llm-2
+      dockerfile: Dockerfile.vllm_simple
+    container_name: vllm-llm-cuda-dl
     ports:
       - "8001:8000"
     environment:
       - NVIDIA_VISIBLE_DEVICES=0
-      - MODEL=unsloth/Llama-3.2-3B-Instruct
+      - CUDA_VISIBLE_DEVICES=0
+      - MODEL=meta-llama/Llama-3.1-8B-Instruct
       - PORT=8000
+      - VLLM_LOGGING_LEVEL=INFO
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_USE_V1=0
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
     volumes:
       - ~/.cache/huggingface:/root/.cache/huggingface
     command: >
-      --model unsloth/Llama-3.2-3B-Instruct
-      --max-model-len 8192
-      --gpu-memory-utilization 0.5
-      --enforce-eager
+      --max-model-len 4096
+      --gpu-memory-utilization 0.8
       --host 0.0.0.0
-      --port 8000
       --trust-remote-code
-      --served-model-name gpt-3.5-turbo
+      --served-model-name meta-llama/Llama-3.1-8B-Instruct
+      --tensor-parallel-size 1      
     networks:
       - rag-network
     deploy:
@@ -29,7 +33,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              device_ids: ['0']
               capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
@@ -37,39 +41,39 @@ services:
       timeout: 30s
       retries: 5
       start_period: 120s
-
+    shm_size: 16gb
+    
   vllm-embedding:
     build:
       context: .
-      dockerfile: Dockerfile.vllm
-    container_name: vllm-embedding-2
+      dockerfile: Dockerfile.vllm_simple
+    container_name: vllm-embedding-cuda-dl
     ports:
       - "8002:8000"
     environment:
-      - NVIDIA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=1
+      - CUDA_VISIBLE_DEVICES=0
       - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
-      - MODEL=jinaai/jina-embeddings-v4-vllm-retrieval
+      - MODEL=nomic-ai/nomic-embed-text-v1
       - PORT=8000
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       - VLLM_USE_V1=0
-      - CUDA_VISIBLE_DEVICES=0
-      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
       - TOKENIZERS_PARALLELISM=false
+      - VLLM_LOGGING_LEVEL=ERROR
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
     volumes:
       - ~/.cache/huggingface:/root/.cache/huggingface
     command: >
-      --model jinaai/jina-embeddings-v4-vllm-retrieval
-      --max-model-len 8192
-      --gpu-memory-utilization 0.25
+      --max-model-len 2048
+      --gpu-memory-utilization 0.5
       --enforce-eager
+      --disable-custom-all-reduce
       --host 0.0.0.0
-      --port 8000
-      --task embed
       --trust-remote-code
       --dtype float16
-      --disable-log-stats
-      --served-model-name jina-embeddings-v4
-      --disable-log-requests
+      --served-model-name nomic-embed-text-v1
+      --tensor-parallel-size 1      
     networks:
       - rag-network
     deploy:
@@ -77,7 +81,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              device_ids: ['1']
               capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
@@ -85,10 +89,11 @@ services:
       timeout: 30s
       retries: 5
       start_period: 120s
+    shm_size: 16gb
 
   qdrant:
     image: qdrant/qdrant:latest
-    container_name: qdrant-2
+    container_name: qdrant-cuda-dl
     ports:
       - "6333:6333"
       - "6334:6334"
@@ -99,7 +104,7 @@ services:
 
   nginx:
     image: nginx:alpine
-    container_name: nginx-proxy-2
+    container_name: nginx-proxy-cuda-dl
     ports:
       - "8000:80"
     volumes:
@@ -121,9 +126,9 @@ services:
     build:
       context: ./app
       dockerfile: Dockerfile
-    container_name: rag-app-2
+    container_name: rag-app-cuda-dl
     ports:
-      - "8501:8501"
+      - "5000:5000"
     volumes:
       - ./data:/app/data
       - ./app:/app
