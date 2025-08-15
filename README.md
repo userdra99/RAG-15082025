@@ -5,12 +5,13 @@ A Retrieval-Augmented Generation (RAG) system built with vLLM, LlamaIndex, and Q
 ## 🚀 Features
 
 - **LLM Integration**: Meta-Llama-3.1-8B-Instruct via vLLM with GPU acceleration
-- **Embedding Service**: Nomic Embed Text v1 for document vectorization
+- **Embedding Service**: BGE-M3 (1024-dim) or Nomic Embed Text v1 (768-dim) for document vectorization
 - **Document Processing**: Supports PDF, DOCX, and XLSX files with Docling
 - **Vector Database**: Qdrant for efficient similarity search
 - **Web Interface**: Flask-based UI for document upload and querying
 - **Contextual Chunking**: Smart document segmentation with 512-token chunks
 - **Containerized Deployment**: Docker Compose for easy setup
+- **Dynamic Embedding Support**: Automatic dimension detection for different embedding models
 
 ## 🏗️ Architecture
 
@@ -54,8 +55,19 @@ export HUGGING_FACE_HUB_TOKEN=your_token_here
 ```
 
 ### 3. Deploy Services
+
+#### Option A: Deploy with BGE-M3 (Recommended - Better Quality)
 ```bash
-# Start all services
+# Deploy with BGE-M3 embeddings (1024 dimensions)
+./deploy_bge_m3.sh
+
+# Or manually with Docker Compose
+docker compose -f docker-compose.bge-m3.yml up -d
+```
+
+#### Option B: Deploy with Nomic Embed Text v1
+```bash
+# Start all services with Nomic embeddings (768 dimensions)
 docker compose up -d
 
 # Check service status
@@ -73,15 +85,23 @@ RAG-15082025/
 ├── app/                        # Flask application
 │   ├── main.py                 # Main application logic
 │   ├── requirements.txt        # Python dependencies
+│   ├── requirements.bge-m3.txt # BGE-M3 specific dependencies
 │   ├── Dockerfile             # App container config
+│   ├── Dockerfile.bge-m3      # BGE-M3 specific container
+│   ├── migrate_collection.py  # Collection migration utility
 │   ├── templates/             # HTML templates
 │   │   └── index.html         # Main UI
 │   ├── static/               # CSS/JS assets
 │   └── data/                 # Document upload directory
 ├── nginx/
 │   └── nginx.conf            # Load balancer configuration
-├── docker-compose.yml        # Service orchestration
+├── docker-compose.yml        # Service orchestration (Nomic)
+├── docker-compose.bge-m3.yml # Service orchestration (BGE-M3)
 ├── Dockerfile.vllm_simple    # vLLM container config
+├── deploy_bge_m3.sh          # BGE-M3 deployment script
+├── test_bge_m3.py            # BGE-M3 integration tests
+├── test_simple_bge_m3.py     # BGE-M3 quick test
+├── BGE_M3_MIGRATION.md       # Migration documentation
 └── README.md                 # This file
 ```
 
@@ -94,10 +114,19 @@ RAG-15082025/
    - Max context: 4096 tokens
    - GPU utilization: 80%
 
-2. **Embedding Service**: Nomic Embed Text v1  
+2. **Embedding Service Options**:
+   
+   **BGE-M3** (Recommended):
+   - Model: `BAAI/bge-m3`
+   - Vector dimensions: 1024
+   - GPU utilization: 70%
+   - Better semantic understanding
+   
+   **Nomic Embed Text v1**:
    - Model: `nomic-ai/nomic-embed-text-v1`
    - Vector dimensions: 768
    - GPU utilization: 50%
+   - Lighter resource usage
 
 3. **Vector Database**: Qdrant
    - Collection: `documents`
@@ -110,7 +139,9 @@ RAG-15082025/
 |----------|-------------|---------|
 | `HUGGING_FACE_HUB_TOKEN` | HF token for model downloads | Required |
 | `OPENAI_API_KEY` | API key for vLLM compatibility | `sk-12345` |
-| `OPENAI_API_BASE` | vLLM API endpoint | `http://nginx:80/v1` |
+| `LLM_API_BASE` | LLM service endpoint | `http://vllm-llm:8000/v1` |
+| `EMBEDDING_API_BASE` | Embedding service endpoint | `http://vllm-embedding:8000/v1` |
+| `EMBEDDING_MODEL` | Embedding model to use | `BAAI/bge-m3` or `nomic-embed-text-v1` |
 
 ## 📖 Usage
 
@@ -183,21 +214,30 @@ curl http://localhost:5000/health
 
 ### ✅ Working Components
 - LLM service (Llama-3.1-8B-Instruct) 
-- Embedding service (Nomic Embed Text v1)
+- Embedding service (BGE-M3 1024-dim or Nomic Embed Text v1 768-dim)
 - Document processing (PDF/DOCX/XLSX with Docling)
-- Vector database (Qdrant)
+- Vector database (Qdrant with dynamic dimension support)
 - Web interface and API endpoints
-- Nginx load balancing
+- Custom BGE-M3 embedding integration
+- Full RAG query functionality
 
-### ⚠️ Known Issues
-- **Vector Store Integration**: LlamaIndex version compatibility issue preventing final index creation
-- **Error**: `'QdrantVectorStore' object has no attribute '_collection_initialized'`
-- **Status**: All components functional individually, integration issue blocks final indexing
+### 🚀 Recent Updates
+- **BGE-M3 Integration**: Successfully integrated BGE-M3 with 1024-dimensional embeddings
+- **Dynamic Dimensions**: Automatic vector dimension detection based on model
+- **Custom Embedding Wrapper**: Bypasses LlamaIndex OpenAI validation for BGE-M3
+- **Migration Tools**: Automated deployment and testing scripts for BGE-M3
 
-### 🛠️ Next Steps
-1. Resolve LlamaIndex version compatibility (0.10.x vs 0.13.x)
-2. Complete document indexing workflow
-3. Enable full RAG query functionality
+### 🛠️ Migration from Nomic to BGE-M3
+```bash
+# Quick migration to BGE-M3
+./deploy_bge_m3.sh
+
+# Test BGE-M3 integration
+python3 test_simple_bge_m3.py
+
+# Run comprehensive tests
+python3 test_bge_m3.py
+```
 
 ## 📊 Performance Notes
 
