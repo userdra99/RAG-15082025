@@ -1,0 +1,149 @@
+services:
+  vllm-llm:
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm_simple
+    container_name: vllm-llm-cuda-dl
+    ports:
+      - "8001:8000"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0
+      - CUDA_VISIBLE_DEVICES=0
+      - MODEL=meta-llama/Llama-3.1-8B-Instruct
+      - PORT=8000
+      - VLLM_LOGGING_LEVEL=INFO
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_USE_V1=0
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    command: >
+      --max-model-len 4096
+      --gpu-memory-utilization 0.8
+      --host 0.0.0.0
+      --trust-remote-code
+      --served-model-name meta-llama/Llama-3.1-8B-Instruct
+      --tensor-parallel-size 1      
+    networks:
+      - rag-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 120s
+    shm_size: 16gb
+    
+  vllm-embedding:
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm_simple
+    container_name: vllm-embedding-cuda-dl
+    ports:
+      - "8002:8000"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=1
+      - CUDA_VISIBLE_DEVICES=0
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+      - MODEL=BAAI/bge-m3  # Updated for BGE-M3
+      - PORT=8000
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_USE_V1=0
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      - TOKENIZERS_PARALLELISM=false
+      - VLLM_LOGGING_LEVEL=ERROR
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    command: >
+      --max-model-len 2048
+      --gpu-memory-utilization 0.7
+      --enforce-eager
+      --disable-custom-all-reduce
+      --host 0.0.0.0
+      --trust-remote-code
+      --dtype float16
+      --served-model-name BAAI/bge-m3
+      --tensor-parallel-size 1      
+    networks:
+      - rag-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['1']
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 120s
+    shm_size: 16gb
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant-cuda-dl
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - rag-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-proxy-cuda-dl
+    ports:
+      - "8000:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      vllm-llm:
+        condition: service_healthy
+      vllm-embedding:
+        condition: service_healthy
+    networks:
+      - rag-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile.bge-m3  # New Dockerfile for BGE-M3
+    container_name: rag-app-cuda-dl
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/app/data
+      - ./app:/app
+    depends_on:
+      - qdrant
+      - nginx
+    networks:
+      - rag-network
+    environment:
+      - OPENAI_API_KEY=sk-12345
+      - OPENAI_API_BASE=http://nginx:80/v1
+      - EMBEDDING_MODEL=BAAI/bge-m3  # Updated model name
+
+volumes:
+  qdrant_data:
+
+networks:
+  rag-network:
+    driver: bridge

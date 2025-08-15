@@ -293,20 +293,33 @@
             }
 
             try {
-                const response = await fetch('/upload', {
+                // First upload the files
+                const uploadResponse = await fetch('/upload', {
                     method: 'POST',
                     body: formData
                 });
                 
-                const data = await response.json();
-                if (data.success) {
-                    alert(data.message);
-                    location.reload();
+                const uploadData = await uploadResponse.json();
+                if (uploadData.success) {
+                    alert(uploadData.message + ' Processing documents...');
+                    
+                    // Then automatically process them
+                    const processResponse = await fetch('/process', {
+                        method: 'POST'
+                    });
+                    
+                    const processData = await processResponse.json();
+                    if (processData.success) {
+                        alert('Documents processed successfully: ' + processData.message);
+                        location.reload();
+                    } else {
+                        alert('Processing failed: ' + processData.error);
+                    }
                 } else {
-                    alert('Upload failed: ' + data.error);
+                    alert('Upload failed: ' + uploadData.error);
                 }
             } catch (error) {
-                alert('Error uploading files: ' + error);
+                alert('Error uploading/processing files: ' + error);
             }
         }
 

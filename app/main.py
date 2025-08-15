@@ -195,10 +195,22 @@ class DoclingDocxReader:
             reader = DocxReader()
             return reader.load_data(file_path)
 
+def get_embedding_dimensions(model_name: str) -> int:
+    """Get embedding dimensions based on model name"""
+    model_dimensions = {
+        "nomic-embed-text-v1": 768,
+        "nomic-ai/nomic-embed-text-v1": 768,
+        "BAAI/bge-m3": 1024,
+        "bge-m3": 1024
+    }
+    return model_dimensions.get(model_name, 768)  # Default to 768 if unknown
+
 def initialize_system():
     """Initialize the RAG system with vLLM and Qdrant"""
     try:
-        api_base = os.environ.get("OPENAI_API_BASE", "http://nginx:80/v1")
+        # Separate endpoints for LLM and embedding services
+        llm_api_base = os.environ.get("LLM_API_BASE", "http://vllm-llm:8000/v1")
+        embedding_api_base = os.environ.get("EMBEDDING_API_BASE", "http://vllm-embedding:8000/v1")
         api_key = os.environ.get("OPENAI_API_KEY", "sk-12345")
         
         # Use OpenAI-like client for vLLM endpoints
@@ -206,24 +218,119 @@ def initialize_system():
         
         Settings.llm = OpenAILike(
             model="meta-llama/Llama-3.1-8B-Instruct",
-            api_base=api_base,
+            api_base=llm_api_base,
             api_key=api_key,
             max_new_tokens=512,
             is_chat_model=True
         )
         
-        # Use OpenAI-like embedding client for custom models
-        from llama_index.embeddings.openai_like import OpenAILikeEmbedding
+        # Use simple approach: just use the working OpenAI embedding and test directly
+        from llama_index.embeddings.openai import OpenAIEmbedding
         
         model_name = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text-v1")
+        embedding_dimensions = get_embedding_dimensions(model_name)
         
-        # Use OpenAI-like client which accepts any model name
-        Settings.embed_model = OpenAILikeEmbedding(
-            model_name=model_name, 
-            api_base=api_base,
-            api_key=api_key,
-            embed_batch_size=10
+        logger.info(f"Using embedding model: {model_name} with {embedding_dimensions} dimensions")
+        
+        # Test if we can connect directly to BGE-M3
+        import requests
+        test_payload = {
+            "input": ["test"],
+            "model": model_name
+        }
+        
+        test_response = requests.post(
+            f"{embedding_api_base}/embeddings",
+            json=test_payload,
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10
         )
+        
+        if test_response.status_code == 200:
+            logger.info(f"✅ BGE-M3 endpoint test successful")
+            
+            # Create custom embedding class that works with BGE-M3
+            from llama_index.core.embeddings import BaseEmbedding
+            
+            class BGE_M3_Embedding(BaseEmbedding):
+                api_base: str
+                api_key: str
+                model_name: str
+                
+                def __init__(self, api_base: str, api_key: str, model_name: str):
+                    super().__init__(
+                        api_base=api_base,
+                        api_key=api_key,
+                        model_name=model_name
+                    )
+                    
+                def _get_embedding(self, text: str) -> list:
+                    """Get embedding for a single text"""
+                    payload = {
+                        "input": [text],
+                        "model": self.model_name
+                    }
+                    
+                    response = requests.post(
+                        f"{self.api_base}/embeddings",
+                        json=payload,
+                        headers={"Authorization": f"Bearer {self.api_key}"},
+                        timeout=30
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        embeddings = data.get('data', [])
+                        if embeddings:
+                            return embeddings[0].get('embedding', [])
+                    
+                    raise Exception(f"Failed to get embedding: {response.status_code} - {response.text}")
+                
+                def _get_text_embedding(self, text: str) -> list:
+                    """Interface method for single text embedding"""
+                    return self._get_embedding(text)
+                
+                def _get_text_embeddings(self, texts: list) -> list:
+                    """Interface method for batch text embeddings"""
+                    embeddings = []
+                    for text in texts:
+                        embeddings.append(self._get_embedding(text))
+                    return embeddings
+                
+                def _get_query_embedding(self, query: str) -> list:
+                    """Interface method for query embedding"""
+                    return self._get_embedding(query)
+                
+                async def _aget_query_embedding(self, query: str) -> list:
+                    """Async query embedding - fallback to sync"""
+                    return self._get_query_embedding(query)
+                
+                async def _aget_text_embedding(self, text: str) -> list:
+                    """Async text embedding - fallback to sync"""
+                    return self._get_text_embedding(text)
+                
+                async def _aget_text_embeddings(self, texts: list) -> list:
+                    """Async batch text embeddings - fallback to sync"""
+                    return self._get_text_embeddings(texts)
+            
+            # Use custom BGE-M3 embedding
+            Settings.embed_model = BGE_M3_Embedding(
+                api_base=embedding_api_base,
+                api_key=api_key,
+                model_name=model_name
+            )
+            logger.info(f"✅ Successfully configured custom BGE-M3 embedding")
+            
+        else:
+            logger.error(f"❌ BGE-M3 endpoint test failed: {test_response.status_code} - {test_response.text}")
+            
+            # Fallback to OpenAI embedding with ada-002
+            Settings.embed_model = OpenAIEmbedding(
+                model="text-embedding-ada-002",
+                api_key=api_key,
+                api_base=embedding_api_base,
+                embed_batch_size=10
+            )
         
         Settings.text_splitter = SentenceSplitter(
             chunk_size=1024,
@@ -235,17 +342,28 @@ def initialize_system():
             port=6333
         )
         
-        # Create collection if it doesn't exist  
+        # Get embedding model and dimensions
+        model_name = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text-v1")
+        embedding_dimensions = get_embedding_dimensions(model_name)
+        
+        # Create collection if it doesn't exist with appropriate dimensions
+        collection_name = "documents"
         try:
-            client.get_collection("documents")
-            logger.info("Collection 'documents' already exists")
+            collection_info = client.get_collection(collection_name)
+            logger.info(f"Collection '{collection_name}' already exists")
+            
+            # Check if dimensions match current model
+            current_vector_size = collection_info.config.params.vectors.size
+            if current_vector_size != embedding_dimensions:
+                logger.warning(f"Collection vector size ({current_vector_size}) doesn't match model dimensions ({embedding_dimensions})")
+                logger.warning("Consider creating a new collection or migrating data")
         except Exception:
             from qdrant_client.models import Distance, VectorParams
             client.create_collection(
-                collection_name="documents",
-                vectors_config=VectorParams(size=768, distance=Distance.COSINE)
+                collection_name=collection_name,
+                vectors_config=VectorParams(size=embedding_dimensions, distance=Distance.COSINE)
             )
-            logger.info("Created new collection 'documents' with 768-dimensional vectors")
+            logger.info(f"Created new collection '{collection_name}' with {embedding_dimensions}-dimensional vectors for model {model_name}")
         
         vector_store = QdrantVectorStore(
             client=client,
