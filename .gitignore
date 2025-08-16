@@ -47,6 +47,7 @@ logs/
 
 # Qdrant data
 qdrant_data/
+qdrant_storage/
 
 # Alternative Docker configurations (keep main ones)
 docker-compose.simple.yml
@@ -73,3 +74,17 @@ app/data/.hashes/
 
 # Backup files
 *.bak
+backups/
+
+# Claude and AI tools
+.claude/
+.hive-mind/
+.claude-flow/
+
+# RTX 5090 and native builds
+/home/dra/vllm/
+monitor_installation.sh
+
+# Test files
+test_*.json
+*_test.json*.gguf

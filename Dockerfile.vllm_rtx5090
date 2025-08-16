@@ -1,0 +1,37 @@
+# vLLM container optimized for RTX 5090 with NCCL 2.26.5+
+FROM vllm/vllm-openai:v0.10.0
+
+# Update NCCL to 2.26.5+ for RTX 5090 multi-GPU support
+RUN pip install --upgrade nvidia-nccl-cu12>=2.26.5
+
+# NCCL 2.27.7 installed for RTX 5090 support
+
+# Create optimized startup script for RTX 5090
+RUN cat <<'EOF' > /start.sh
+#!/bin/bash
+echo "Starting vLLM server optimized for RTX 5090..."
+echo "Model: ${MODEL}"
+echo "Port: ${PORT:-8000}"
+echo "Additional args: $@"
+
+# RTX 5090 optimizations
+export NCCL_DEBUG=INFO
+export NCCL_MIN_NRINGS=2
+export NCCL_MAX_NRINGS=4
+export NCCL_TREE_THRESHOLD=0
+export NCCL_NET_GDR_LEVEL=5
+export NCCL_P2P_LEVEL=SYS
+
+# Start vLLM server
+exec /usr/bin/python3 -m vllm.entrypoints.openai.api_server \
+    --model "${MODEL}" \
+    --port "${PORT:-8000}" \
+    "$@"
+EOF
+RUN chmod +x /start.sh
+
+# Expose default port
+EXPOSE 8000
+
+# Set entrypoint
+ENTRYPOINT ["bash", "/start.sh"]

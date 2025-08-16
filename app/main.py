@@ -216,12 +216,17 @@ def initialize_system():
         # Use OpenAI-like client for vLLM endpoints
         from llama_index.llms.openai_like import OpenAILike
         
+        # Support multiple LLM models
+        llm_model = os.environ.get("LLM_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
+        
         Settings.llm = OpenAILike(
-            model="meta-llama/Llama-3.1-8B-Instruct",
+            model=llm_model,
             api_base=llm_api_base,
             api_key=api_key,
-            max_new_tokens=512,
-            is_chat_model=True
+            max_new_tokens=1024,  # Increased for better responses
+            is_chat_model=True,
+            temperature=0.7,
+            top_p=0.8
         )
         
         # Use simple approach: just use the working OpenAI embedding and test directly
@@ -497,36 +502,52 @@ def load_documents(data_dir: str) -> List[Document]:
     
     return documents
 
-def create_or_load_index(storage_context, documents: List[Document] = None) -> VectorStoreIndex:
-    """Create or load existing index"""
+def create_or_load_index(storage_context, documents: List[Document] = None, mode: str = "incremental") -> VectorStoreIndex:
+    """Create, load, or update existing index
+    
+    Args:
+        storage_context: Storage context for the index
+        documents: New documents to add (if any)
+        mode: "incremental" to add to existing index, "replace" to create new index
+    """
     try:
         # Check if collection exists and has documents
         collection_exists = check_collection_exists(rag_system['client'])
         
-        if collection_exists:
+        if collection_exists and mode == "incremental":
             try:
                 collection_info = rag_system['client'].get_collection("documents")
-                if collection_info.points_count > 0:
-                    logger.info(f"Loading existing index with {collection_info.points_count} documents...")
-                    # Create fresh vector store with proper client reference
+                existing_count = collection_info.points_count
+                
+                # Load existing index
+                if existing_count > 0:
+                    logger.info(f"Loading existing index with {existing_count} documents...")
                     vector_store = QdrantVectorStore(
                         client=rag_system['client'],
                         collection_name="documents"
                     )
-                    storage_context.vector_store = vector_store
                     index = VectorStoreIndex.from_vector_store(vector_store)
                     logger.info("Successfully loaded existing index")
+                    
+                    # Add new documents incrementally if provided
+                    if documents and len(documents) > 0:
+                        logger.info(f"Adding {len(documents)} new documents to existing index...")
+                        for doc in documents:
+                            index.insert(doc)
+                        logger.info(f"Successfully added {len(documents)} documents. Total now: {existing_count + len(documents)}")
+                    
                     return index
                 else:
-                    logger.info("Collection exists but is empty")
+                    logger.info("Collection exists but is empty, will create new index")
             except Exception as e:
-                logger.info(f"Could not load existing index: {e}")
+                logger.error(f"Could not load/update existing index: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
         
-        # If loading failed or no collection, try to create new index with documents
+        # Create new index if no collection exists, mode is "replace", or incremental failed
         if documents and len(documents) > 0:
             logger.info(f"Creating new index with {len(documents)} documents")
             try:
-                logger.info("Starting index creation...")
                 index = VectorStoreIndex.from_documents(
                     documents,
                     storage_context=storage_context
@@ -537,8 +558,17 @@ def create_or_load_index(storage_context, documents: List[Document] = None) -> V
                 logger.error(f"Error creating index: {create_error}")
                 return None
         else:
-            logger.info("No documents available to create index")
-            return None
+            # If no documents and no existing index, create empty index
+            if not collection_exists:
+                logger.info("Creating empty index for future document additions")
+                index = VectorStoreIndex.from_documents(
+                    [],
+                    storage_context=storage_context
+                )
+                return index
+            else:
+                logger.info("No new documents to add")
+                return None
                 
     except Exception as e:
         logger.error(f"Unexpected error in create_or_load_index: {e}")
@@ -669,8 +699,23 @@ def process_documents():
 @app.route('/query', methods=['POST'])
 def query():
     """Handle search queries"""
-    data = request.get_json()
+    logger.info(f"Request method: {request.method}")
+    logger.info(f"Content-Type: {request.content_type}")
+    logger.info(f"Raw data: {request.get_data()}")
+    
+    try:
+        data = request.get_json()
+        logger.info(f"Parsed JSON: {data}")
+    except Exception as e:
+        logger.error(f"JSON parsing error: {e}")
+        return jsonify({'success': False, 'error': 'Invalid JSON data'}), 400
+    
+    if data is None:
+        logger.error("No JSON data received")
+        return jsonify({'success': False, 'error': 'No JSON data provided'}), 400
+    
     query_text = data.get('query', '')
+    logger.info(f"Query text: '{query_text}'")
     
     if not query_text:
         return jsonify({'success': False, 'error': 'No query provided'}), 400

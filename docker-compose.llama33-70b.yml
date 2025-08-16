@@ -1,0 +1,166 @@
+services:
+  vllm-llm:
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm_rtx5090
+    container_name: vllm-llama33-70b-awq
+    ports:
+      - "8001:8000"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0,1
+      - CUDA_VISIBLE_DEVICES=0,1
+      - MODEL=casperhansen/llama-3.3-70b-instruct-awq
+      - PORT=8000
+      - VLLM_LOGGING_LEVEL=INFO
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+      - OMP_NUM_THREADS=4
+      - VLLM_USE_V1=0
+      - CUDA_LAUNCH_BLOCKING=1
+      - NCCL_DEBUG=INFO
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    command: >
+      --model casperhansen/llama-3.3-70b-instruct-awq
+      --max-model-len 4096
+      --gpu-memory-utilization 0.80
+      --tensor-parallel-size 2
+      --host 0.0.0.0
+      --trust-remote-code
+      --quantization awq
+      --enforce-eager
+      --disable-custom-all-reduce
+    networks:
+      - rag-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0', '1']
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 300s
+    shm_size: 32gb
+    
+  vllm-embedding:
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm_simple
+    container_name: vllm-embedding-bge-m3
+    ports:
+      - "8002:8000"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=1
+      - CUDA_VISIBLE_DEVICES=0
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+      - MODEL=BAAI/bge-m3
+      - PORT=8000
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      - TOKENIZERS_PARALLELISM=false
+      - VLLM_LOGGING_LEVEL=ERROR
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    command: >
+      --max-model-len 8192
+      --gpu-memory-utilization 0.15
+      --enforce-eager
+      --disable-custom-all-reduce
+      --host 0.0.0.0
+      --trust-remote-code
+      --dtype float16
+      --served-model-name BAAI/bge-m3
+      --tensor-parallel-size 1      
+    networks:
+      - rag-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['1']
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 120s
+      
+  app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile.bge-m3
+    container_name: rag-app-llama33-70b
+    ports:
+      - "5000:5000"
+    environment:
+      - LLM_API_BASE=http://vllm-llm:8000/v1
+      - EMBEDDING_API_BASE=http://vllm-embedding:8000/v1
+      - EMBEDDING_MODEL=BAAI/bge-m3
+      - LLM_MODEL=casperhansen/llama-3.3-70b-instruct-awq
+      - OPENAI_API_KEY=sk-12345
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - vllm-llm
+      - vllm-embedding
+      - qdrant
+    networks:
+      - rag-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant-llama33-70b
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ./qdrant_storage:/qdrant/storage:z
+    environment:
+      - QDRANT__LOG_LEVEL=INFO
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    networks:
+      - rag-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-llama33-70b
+    ports:
+      - "8000:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - vllm-llm
+      - vllm-embedding
+    networks:
+      - rag-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  rag-network:
+    driver: bridge
+
+volumes:
+  qdrant_storage:
