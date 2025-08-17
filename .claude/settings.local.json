@@ -10,8 +10,22 @@
       "WebFetch(domain:docs.llamaindex.ai)",
       "Bash(chmod:*)",
       "Bash(grep:*)",
-      "Bash(docker volume:*)"
+      "Bash(docker volume:*)",
+      "Bash(docker logs:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(docker compose:*)",
+      "Bash(docker run:*)",
+      "Bash(rm:*)",
+      "mcp__sequential-thinking__sequentialthinking",
+      "Bash(docker exec:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker ps:*)",
+      "Bash(lsof:*)",
+      "Bash(docker inspect:*)",
+      "Bash(docker cp:*)",
+      "Bash(docker restart:*)"
     ],
-    "deny": []
+    "deny": [],
+    "defaultMode": "acceptEdits"
   }
 }
