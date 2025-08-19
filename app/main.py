@@ -698,7 +698,7 @@ def process_documents():
 
 @app.route('/query', methods=['POST'])
 def query():
-    """Handle search queries"""
+    """Handle search queries with document filtering and relevance boosting"""
     logger.info(f"Request method: {request.method}")
     logger.info(f"Content-Type: {request.content_type}")
     logger.info(f"Raw data: {request.get_data()}")
@@ -715,7 +715,15 @@ def query():
         return jsonify({'success': False, 'error': 'No JSON data provided'}), 400
     
     query_text = data.get('query', '')
+    selected_documents = data.get('selected_documents', [])
+    num_sources = data.get('num_sources', 5)  # Default to 5 if not specified
+    
+    # Validate num_sources
+    num_sources = min(max(num_sources, 1), 20)  # Between 1 and 20
+    
     logger.info(f"Query text: '{query_text}'")
+    logger.info(f"Selected documents: {selected_documents}")
+    logger.info(f"Number of sources requested: {num_sources}")
     
     if not query_text:
         return jsonify({'success': False, 'error': 'No query provided'}), 400
@@ -724,20 +732,111 @@ def query():
         return jsonify({'success': False, 'error': 'System not initialized or no documents indexed'}), 400
     
     try:
-        # Simplified query engine without reranker to test core functionality
-        query_engine = rag_system['index'].as_query_engine(
-            similarity_top_k=5
+        # Extract keywords from query for filename matching
+        query_keywords = query_text.lower().split()
+        
+        # Create custom retriever with filtering and boosting
+        from llama_index.core import VectorStoreIndex
+        from llama_index.core.retrievers import VectorIndexRetriever
+        from llama_index.core.schema import NodeWithScore
+        
+        # Get more candidates initially for filtering (3x the requested amount)
+        initial_candidates = min(num_sources * 3, 30)  # Get 3x requested but max 30
+        retriever = VectorIndexRetriever(
+            index=rag_system['index'],
+            similarity_top_k=initial_candidates
         )
         
-        response = query_engine.query(query_text)
+        # Retrieve nodes
+        nodes = retriever.retrieve(query_text)
+        
+        # Filter and boost nodes
+        filtered_and_boosted_nodes = []
+        for node in nodes:
+            # Ensure metadata is properly accessed
+            node_metadata = node.node.metadata if hasattr(node.node, 'metadata') else node.metadata
+            file_name = node_metadata.get('file_name', 'Unknown')
+            
+            # Debug logging
+            logger.info(f"Processing node with file_name: {file_name}, metadata: {node_metadata}")
+            
+            # Filter by selected documents if any are selected
+            if selected_documents and file_name not in selected_documents:
+                logger.info(f"Filtering out {file_name} - not in selected documents")
+                continue
+            
+            # Calculate boost based on filename relevance
+            boost_factor = 1.0
+            file_name_lower = file_name.lower()
+            
+            # Strong boost if filename contains important keywords from query
+            for keyword in query_keywords:
+                if len(keyword) > 3 and keyword in file_name_lower:
+                    boost_factor *= 1.5  # 50% boost per matching keyword
+                    logger.info(f"Boosting {file_name} by 1.5x for keyword: {keyword}")
+            
+            # Apply boost to score
+            original_score = float(node.score) if node.score else 0
+            boosted_score = original_score * boost_factor
+            
+            # Create new node with boosted score and preserved metadata
+            boosted_node = NodeWithScore(
+                node=node.node,
+                score=boosted_score
+            )
+            # Ensure metadata is properly preserved
+            if not hasattr(boosted_node.node, 'metadata') or boosted_node.node.metadata is None:
+                boosted_node.node.metadata = {}
+            boosted_node.node.metadata.update(node_metadata)
+            
+            filtered_and_boosted_nodes.append({
+                'node': boosted_node,
+                'original_score': original_score,
+                'boosted_score': boosted_score,
+                'file_name': file_name,
+                'metadata': node_metadata
+            })
+        
+        # Sort by boosted score and take top N as requested
+        filtered_and_boosted_nodes.sort(key=lambda x: x['boosted_score'], reverse=True)
+        top_nodes = [item['node'] for item in filtered_and_boosted_nodes[:num_sources]]
+        
+        # Log the final selection for debugging
+        for item in filtered_and_boosted_nodes[:num_sources]:
+            logger.info(f"Selected: {item['file_name']} - Original: {item['original_score']:.3f}, Boosted: {item['boosted_score']:.3f}")
+        
+        # Use the filtered nodes for response generation
+        from llama_index.core.query_engine import RetrieverQueryEngine
+        query_engine = RetrieverQueryEngine.from_args(
+            retriever=retriever,
+            llm=Settings.llm
+        )
+        
+        # Generate response using LLM with the top nodes
+        from llama_index.core.response_synthesizers import get_response_synthesizer
+        response_synthesizer = get_response_synthesizer()
+        response = response_synthesizer.synthesize(
+            query_text,
+            nodes=top_nodes
+        )
         
         sources = []
-        for node in response.source_nodes:
+        for idx, node in enumerate(top_nodes):
+            # Access metadata properly
+            metadata = node.node.metadata if hasattr(node.node, 'metadata') else {}
+            file_name = metadata.get('file_name', 'Unknown')
+            
+            # Get the boosted score from our filtered list
+            boosted_info = filtered_and_boosted_nodes[idx] if idx < len(filtered_and_boosted_nodes) else {}
+            score = boosted_info.get('boosted_score', float(node.score) if node.score else 0)
+            
+            logger.info(f"Source {idx}: {file_name} with score {score:.3f}")
+            
             sources.append({
-                'file_name': node.metadata.get('file_name', 'Unknown'),
-                'sheet_name': node.metadata.get('sheet_name', ''),
-                'text': node.text[:500] + "..." if len(node.text) > 500 else node.text,
-                'score': float(node.score) if node.score else 0
+                'file_name': file_name,
+                'sheet_name': metadata.get('sheet_name', ''),
+                'text': node.node.text[:500] + "..." if len(node.node.text) > 500 else node.node.text,
+                'score': score
             })
         
         # Update session chat history
@@ -759,6 +858,8 @@ def query():
         
     except Exception as e:
         logger.error(f"Error processing query: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/clear_history', methods=['POST'])

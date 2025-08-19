@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="theme-color" content="#4285f4">
     <title>RAG Document Assistant</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iOCIgZmlsbD0iIzQ0ODVmNCIvPgo8cGF0aCBkPSJNOCA4SDI0VjI0SDhWOFoiIGZpbGw9IndoaXRlIiBmaWxsLW9wYWNpdHk9IjAuMSIvPgo8cGF0aCBkPSJNMTAgMTBIMTJWMjJIMTBWMTBaTTE0IDEwSDE2VjIySDE0VjEwWk0xOCAxMEgyMFYyMkgxOFYxMFoiIGZpbGw9IndoaXRlIi8+Cjwvc3ZnPgo=">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -41,6 +44,10 @@
             color: var(--text-primary);
             height: 100vh;
             overflow: hidden;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
         }
 
         /* Main Layout Container */
@@ -52,6 +59,7 @@
             grid-template-rows: 60px 1fr;
             grid-template-columns: minmax(60px, 320px) 1fr minmax(60px, 320px);
             height: 100vh;
+            height: calc(var(--vh, 1vh) * 100); /* Fallback to custom vh */
             transition: grid-template-columns 0.3s ease;
         }
 
@@ -244,7 +252,10 @@
         .panel-content {
             flex: 1;
             overflow-y: auto;
+            overflow-x: hidden;
             padding: 16px;
+            min-height: 0;
+            max-height: calc(100vh - 110px);
         }
 
         .collapsed .panel-content {
@@ -291,6 +302,10 @@
             display: flex;
             flex-direction: column;
             gap: 8px;
+            max-height: calc(100vh - 350px);
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding-right: 4px;
         }
 
         .document-item {
@@ -303,6 +318,7 @@
             display: flex;
             align-items: center;
             gap: 12px;
+            position: relative;
         }
 
         .document-item:hover {
@@ -311,9 +327,36 @@
             transform: translateX(2px);
         }
 
-        .document-item.active {
+        .document-item.selected {
             background: var(--accent-light);
             border-left-color: var(--accent-primary);
+        }
+
+        .document-checkbox {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+            accent-color: var(--accent-primary);
+        }
+
+        .select-all-container {
+            padding: 8px 12px;
+            background: var(--bg-accent);
+            border-radius: 6px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .select-all-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-primary);
+            cursor: pointer;
         }
 
         .doc-icon {
@@ -351,24 +394,31 @@
             display: flex;
             flex-direction: column;
             position: relative;
+            height: calc(100vh - 60px);
+            height: calc(100dvh - 60px); /* Dynamic viewport height for mobile */
+            overflow: hidden;
         }
 
         .chat-container {
             flex: 1;
             display: flex;
             flex-direction: column;
-            padding: 24px;
+            padding: 20px;
             overflow: hidden;
+            min-height: 0;
+            max-height: 100%;
         }
 
         .chat-messages {
             flex: 1;
             overflow-y: auto;
+            overflow-x: hidden;
             padding: 16px;
             background: var(--bg-primary);
             border-radius: 12px;
-            margin-bottom: 20px;
             border: 1px solid var(--border-light);
+            min-height: 0;
+            scroll-behavior: smooth;
         }
 
         .message {
@@ -528,12 +578,47 @@
 
         /* Input Area */
         .chat-input-area {
-            padding: 16px;
+            padding: 12px 16px;
             background: var(--bg-secondary);
-            border-top: 1px solid var(--border-light);
             display: flex;
             gap: 12px;
             align-items: flex-end;
+        }
+
+        .query-options {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 16px;
+            background: var(--bg-tertiary);
+            border-bottom: 1px solid var(--border-light);
+            border-radius: 12px 12px 0 0;
+            font-size: 13px;
+        }
+
+        .sources-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .sources-control label {
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .sources-control input[type="number"] {
+            width: 60px;
+            padding: 4px 8px;
+            border: 1px solid var(--border-light);
+            border-radius: 4px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+
+        .sources-control input[type="range"] {
+            width: 100px;
+            accent-color: var(--accent-primary);
         }
 
         .input-container {
@@ -616,6 +701,13 @@
             grid-area: right-panel;
         }
 
+        #chatHistory {
+            max-height: calc(100vh - 150px);
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding-right: 4px;
+        }
+
         .history-item {
             padding: 12px 16px;
             border-bottom: 1px solid var(--border-light);
@@ -650,8 +742,36 @@
 
         .spinner-container {
             display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
             text-align: center;
             padding: 20px;
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            box-shadow: var(--shadow-medium);
+            z-index: 10;
+        }
+
+        /* Input wrapper to stay at bottom */
+        .chat-input-wrapper {
+            display: flex;
+            flex-direction: column;
+            margin-top: 12px;
+            background: var(--bg-secondary);
+            border-radius: 12px 12px 0 0;
+            box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05);
+            flex-shrink: 0;
+            position: relative;
+            z-index: 5;
+        }
+        
+        /* Safe area for mobile devices */
+        @supports (padding-bottom: env(safe-area-inset-bottom)) {
+            .chat-input-wrapper {
+                padding-bottom: env(safe-area-inset-bottom);
+            }
         }
 
         /* Scrollbar Styling */
@@ -662,6 +782,7 @@
 
         ::-webkit-scrollbar-track {
             background: var(--bg-tertiary);
+            border-radius: 4px;
         }
 
         ::-webkit-scrollbar-thumb {
@@ -673,22 +794,81 @@
             background: var(--text-secondary);
         }
 
-        /* Responsive Design */
-        @media (max-width: 1024px) {
+        /* Specific scrollbar for panels */
+        .panel-content::-webkit-scrollbar,
+        .document-list::-webkit-scrollbar,
+        #chatHistory::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .panel-content::-webkit-scrollbar-track,
+        .document-list::-webkit-scrollbar-track,
+        #chatHistory::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .panel-content::-webkit-scrollbar-thumb,
+        .document-list::-webkit-scrollbar-thumb,
+        #chatHistory::-webkit-scrollbar-thumb {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 3px;
+        }
+
+        .panel-content:hover::-webkit-scrollbar-thumb,
+        .document-list:hover::-webkit-scrollbar-thumb,
+        #chatHistory:hover::-webkit-scrollbar-thumb {
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        /* Mobile-first Responsive Design */
+        @media (max-width: 768px) {
+            /* Mobile layout */
             .app-layout {
                 grid-template-areas: 
-                    "header header header"
-                    "center-panel center-panel center-panel";
+                    "header"
+                    "center-panel";
+                grid-template-rows: 60px 1fr;
                 grid-template-columns: 1fr;
+                height: 100vh;
+                height: 100dvh; /* Dynamic viewport height */
             }
             
+            .header {
+                padding: 0 12px;
+            }
+            
+            .header-left {
+                gap: 8px;
+            }
+            
+            .logo span {
+                display: none; /* Hide logo text on mobile */
+            }
+            
+            .breadcrumb {
+                display: none; /* Hide breadcrumb on mobile */
+            }
+            
+            .header-right {
+                gap: 8px;
+            }
+            
+            .header-btn {
+                width: 32px;
+                height: 32px;
+            }
+            
+            /* Mobile panels */
             .left-panel, .right-panel {
                 position: fixed;
                 top: 60px;
                 height: calc(100vh - 60px);
-                z-index: 200;
+                width: 90vw;
+                max-width: 320px;
+                z-index: 300;
                 transform: translateX(-100%);
                 transition: transform 0.3s ease;
+                box-shadow: var(--shadow-strong);
             }
             
             .right-panel {
@@ -703,10 +883,161 @@
             .right-panel.mobile-visible {
                 transform: translateX(0);
             }
+            
+            /* Mobile overlay */
+            .mobile-overlay {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100vw;
+                height: 100vh;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 250;
+                opacity: 0;
+                visibility: hidden;
+                transition: all 0.3s ease;
+            }
+            
+            .mobile-overlay.active {
+                opacity: 1;
+                visibility: visible;
+            }
+            
+            /* Center panel adjustments */
+            .center-panel {
+                height: calc(100vh - 60px);
+                height: calc(100dvh - 60px);
+                height: calc(100svh - 60px); /* Small viewport height for mobile browsers */
+                position: relative;
+                overflow: hidden;
+            }
+            
+            .chat-container {
+                padding: 12px;
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+                position: relative;
+            }
+            
+            .chat-messages {
+                flex: 1 1 auto;
+                min-height: 0;
+                overflow-y: auto;
+                margin-bottom: 10px;
+            }
+            
+            .chat-input-wrapper {
+                flex: 0 0 auto;
+                margin-top: auto;
+                max-height: 40vh; /* Limit input area height */
+                overflow-y: auto;
+            }
+            
+            /* Input area mobile improvements */
+            .query-options {
+                flex-direction: column;
+                gap: 8px;
+                padding: 12px;
+                align-items: stretch;
+            }
+            
+            .sources-control {
+                flex-direction: column;
+                gap: 4px;
+                align-items: stretch;
+            }
+            
+            .sources-control input[type="range"] {
+                width: 100%;
+            }
+            
+            .chat-input-area {
+                padding: 12px;
+                gap: 8px;
+            }
+            
+            .chat-input {
+                font-size: 16px; /* Prevent zoom on iOS */
+                min-height: 44px; /* Touch-friendly size */
+            }
+            
+            .send-button {
+                width: 44px;
+                height: 44px;
+                border-radius: 22px;
+            }
+            
+            .input-action-btn {
+                width: 36px;
+                height: 36px;
+            }
+            
+            /* Document items touch-friendly */
+            .document-item {
+                padding: 16px 12px;
+                gap: 16px;
+            }
+            
+            .document-checkbox {
+                width: 20px;
+                height: 20px;
+            }
+            
+            /* History items touch-friendly */
+            .history-item {
+                padding: 16px;
+            }
+            
+            /* Status pill mobile */
+            .status-pill {
+                padding: 4px 8px;
+                font-size: 12px;
+            }
+        }
+        
+        @media (min-width: 769px) and (max-width: 1024px) {
+            /* Tablet layout */
+            .app-layout {
+                grid-template-areas: 
+                    "header header header"
+                    "left-panel center-panel right-panel";
+                grid-template-columns: 280px 1fr 280px;
+            }
+            
+            .left-panel, .right-panel {
+                width: 280px;
+            }
+        }
+        
+        @media (min-width: 1025px) {
+            /* Desktop layout - default grid already defined */
+        }
+        
+        /* Touch device optimizations */
+        @media (hover: none) and (pointer: coarse) {
+            /* Increase touch targets */
+            .panel-control-btn,
+            .header-btn,
+            .input-action-btn {
+                min-width: 44px;
+                min-height: 44px;
+            }
+            
+            .document-item:hover {
+                transform: none; /* Disable hover animations on touch */
+            }
+            
+            .message-references .references-header {
+                padding: 12px;
+            }
         }
     </style>
 </head>
 <body>
+    <!-- Mobile overlay for panels -->
+    <div class="mobile-overlay" id="mobileOverlay" onclick="closeMobilePanels()"></div>
+    
     <div class="app-layout" id="appLayout">
         <!-- Header -->
         <div class="header">
@@ -765,10 +1096,22 @@
 
                 <div style="margin-bottom: 16px;">
                     <div style="font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Knowledge Base</div>
+                    {% if documents %}
+                        <div class="select-all-container">
+                            <label class="select-all-label">
+                                <input type="checkbox" id="selectAllDocs" class="document-checkbox" checked>
+                                <span>Select All Documents</span>
+                            </label>
+                            <small style="color: var(--text-secondary);">
+                                <span id="selectedCount">{{ documents.keys()|length }}</span>/{{ documents.keys()|length }} selected
+                            </small>
+                        </div>
+                    {% endif %}
                     <div class="document-list" id="documentsList">
                         {% if documents %}
                             {% for file_name, info in documents.items() %}
-                                <div class="document-item" onclick="selectDocument('{{ file_name }}')">
+                                <div class="document-item selected" data-filename="{{ file_name }}">
+                                    <input type="checkbox" class="document-checkbox" checked data-filename="{{ file_name }}" onclick="toggleDocumentSelection(event, '{{ file_name }}')">
                                     <div class="doc-icon">
                                         {% if info.type == 'pdf' %}
                                             <i class="fas fa-file-pdf"></i>
@@ -813,25 +1156,38 @@
                     </div>
                 </div>
                 
+                <!-- Input area wrapper to keep at bottom -->
+                <div class="chat-input-wrapper">
+                    <div class="query-options">
+                        <div class="sources-control">
+                            <label for="numSources">Number of sources:</label>
+                            <input type="number" id="numSources" min="1" max="20" value="5" onchange="updateSourcesValue(this.value)">
+                            <input type="range" id="numSourcesSlider" min="1" max="20" value="5" onchange="updateSourcesInput(this.value)">
+                        </div>
+                        <small style="color: var(--text-muted);">Adjust how many reference sources to retrieve (1-20)</small>
+                    </div>
+                    
+                    <div class="chat-input-area">
+                        <div class="input-container">
+                            <textarea class="chat-input" placeholder="Ask me anything about your documents..." rows="1" id="queryInput"></textarea>
+                            <div class="input-actions">
+                                <button class="input-action-btn" onclick="document.getElementById('fileInput').click()">
+                                    <i class="fas fa-paperclip"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <button class="send-button" onclick="sendQuery()">
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Spinner overlay -->
                 <div class="spinner-container" id="spinnerContainer">
                     <div class="spinner-border text-primary" role="status">
                         <span class="visually-hidden">Loading...</span>
                     </div>
                     <p class="mt-2">Processing your query...</p>
-                </div>
-                
-                <div class="chat-input-area">
-                    <div class="input-container">
-                        <textarea class="chat-input" placeholder="Ask me anything about your documents..." rows="1" id="queryInput"></textarea>
-                        <div class="input-actions">
-                            <button class="input-action-btn" onclick="document.getElementById('fileInput').click()">
-                                <i class="fas fa-paperclip"></i>
-                            </button>
-                        </div>
-                    </div>
-                    <button class="send-button" onclick="sendQuery()">
-                        <i class="fas fa-paper-plane"></i>
-                    </button>
                 </div>
             </div>
         </div>
@@ -878,51 +1234,105 @@
         let chatHistory = {{ chat_history | tojson | safe }};
         let isInitialized = {{ initialized | tojson }};
 
-        // Panel toggling functionality
+        // Panel toggling functionality with mobile support
         function togglePanel(side) {
             const layout = document.getElementById('appLayout');
             const leftPanel = document.getElementById('leftPanel');
             const rightPanel = document.getElementById('rightPanel');
+            const overlay = document.getElementById('mobileOverlay');
+            const isMobile = window.innerWidth <= 768;
             
-            if (side === 'left') {
-                const isCollapsed = layout.classList.contains('left-collapsed') || layout.classList.contains('both-collapsed');
-                
-                if (layout.classList.contains('both-collapsed')) {
-                    layout.classList.remove('both-collapsed');
-                    layout.classList.add('right-collapsed');
-                } else if (layout.classList.contains('right-collapsed')) {
-                    layout.classList.remove('right-collapsed');
-                } else if (layout.classList.contains('left-collapsed')) {
-                    layout.classList.remove('left-collapsed');
-                } else {
-                    layout.classList.add('left-collapsed');
+            if (isMobile) {
+                // Mobile panel behavior
+                if (side === 'left') {
+                    const isVisible = leftPanel.classList.contains('mobile-visible');
+                    if (isVisible) {
+                        leftPanel.classList.remove('mobile-visible');
+                        overlay.classList.remove('active');
+                    } else {
+                        // Close right panel if open
+                        rightPanel.classList.remove('mobile-visible');
+                        leftPanel.classList.add('mobile-visible');
+                        overlay.classList.add('active');
+                    }
+                } else if (side === 'right') {
+                    const isVisible = rightPanel.classList.contains('mobile-visible');
+                    if (isVisible) {
+                        rightPanel.classList.remove('mobile-visible');
+                        overlay.classList.remove('active');
+                    } else {
+                        // Close left panel if open
+                        leftPanel.classList.remove('mobile-visible');
+                        rightPanel.classList.add('mobile-visible');
+                        overlay.classList.add('active');
+                    }
                 }
-                
-                leftPanel.classList.toggle('collapsed');
-                
-                // Update icon
-                const icon = leftPanel.querySelector('.panel-control-btn i');
-                icon.className = isCollapsed ? 'fas fa-chevron-left' : 'fas fa-chevron-right';
-                
-            } else if (side === 'right') {
-                const isCollapsed = layout.classList.contains('right-collapsed') || layout.classList.contains('both-collapsed');
-                
-                if (layout.classList.contains('both-collapsed')) {
-                    layout.classList.remove('both-collapsed');
-                    layout.classList.add('left-collapsed');
-                } else if (layout.classList.contains('left-collapsed')) {
-                    layout.classList.remove('left-collapsed');
-                } else if (layout.classList.contains('right-collapsed')) {
-                    layout.classList.remove('right-collapsed');
-                } else {
-                    layout.classList.add('right-collapsed');
+            } else {
+                // Desktop panel behavior (existing code)
+                if (side === 'left') {
+                    const isCollapsed = layout.classList.contains('left-collapsed') || layout.classList.contains('both-collapsed');
+                    
+                    if (layout.classList.contains('both-collapsed')) {
+                        layout.classList.remove('both-collapsed');
+                        layout.classList.add('right-collapsed');
+                    } else if (layout.classList.contains('right-collapsed')) {
+                        layout.classList.remove('right-collapsed');
+                    } else if (layout.classList.contains('left-collapsed')) {
+                        layout.classList.remove('left-collapsed');
+                    } else {
+                        layout.classList.add('left-collapsed');
+                    }
+                    
+                    leftPanel.classList.toggle('collapsed');
+                    
+                    // Update icon
+                    const icon = leftPanel.querySelector('.panel-control-btn i');
+                    if (icon) {
+                        icon.className = isCollapsed ? 'fas fa-chevron-left' : 'fas fa-chevron-right';
+                    }
+                    
+                } else if (side === 'right') {
+                    const isCollapsed = layout.classList.contains('right-collapsed') || layout.classList.contains('both-collapsed');
+                    
+                    if (layout.classList.contains('both-collapsed')) {
+                        layout.classList.remove('both-collapsed');
+                        layout.classList.add('left-collapsed');
+                    } else if (layout.classList.contains('left-collapsed')) {
+                        layout.classList.remove('left-collapsed');
+                    } else if (layout.classList.contains('right-collapsed')) {
+                        layout.classList.remove('right-collapsed');
+                    } else {
+                        layout.classList.add('right-collapsed');
+                    }
+                    
+                    rightPanel.classList.toggle('collapsed');
+                    
+                    // Update icon
+                    const icon = rightPanel.querySelector('.panel-control-btn i');
+                    if (icon) {
+                        icon.className = isCollapsed ? 'fas fa-chevron-right' : 'fas fa-chevron-left';
+                    }
                 }
-                
-                rightPanel.classList.toggle('collapsed');
-                
-                // Update icon
-                const icon = rightPanel.querySelector('.panel-control-btn i');
-                icon.className = isCollapsed ? 'fas fa-chevron-right' : 'fas fa-chevron-left';
+            }
+        }
+        
+        // Close mobile panels
+        function closeMobilePanels() {
+            const leftPanel = document.getElementById('leftPanel');
+            const rightPanel = document.getElementById('rightPanel');
+            const overlay = document.getElementById('mobileOverlay');
+            
+            leftPanel.classList.remove('mobile-visible');
+            rightPanel.classList.remove('mobile-visible');
+            overlay.classList.remove('active');
+        }
+        
+        // Handle window resize
+        function handleResize() {
+            const isMobile = window.innerWidth <= 768;
+            if (!isMobile) {
+                // Close mobile panels when switching to desktop
+                closeMobilePanels();
             }
         }
 
@@ -943,15 +1353,91 @@
             }
         }
 
-        // Document selection
-        function selectDocument(fileName) {
-            // Remove active class from all documents
-            document.querySelectorAll('.document-item').forEach(item => {
-                item.classList.remove('active');
+        // Document selection tracking
+        let selectedDocuments = new Set();
+        
+        // Source count control functions
+        function updateSourcesValue(value) {
+            document.getElementById('numSourcesSlider').value = value;
+        }
+        
+        function updateSourcesInput(value) {
+            document.getElementById('numSources').value = value;
+        }
+        
+        // Initialize selected documents
+        function initializeDocumentSelection() {
+            const checkboxes = document.querySelectorAll('.document-item .document-checkbox');
+            checkboxes.forEach(checkbox => {
+                if (checkbox.checked) {
+                    selectedDocuments.add(checkbox.dataset.filename);
+                }
             });
+            updateSelectedCount();
+        }
+        
+        // Toggle document selection
+        function toggleDocumentSelection(event, fileName) {
+            event.stopPropagation();
+            const checkbox = event.target;
+            const documentItem = checkbox.closest('.document-item');
             
-            // Add active class to selected document
-            event.currentTarget.classList.add('active');
+            if (checkbox.checked) {
+                selectedDocuments.add(fileName);
+                documentItem.classList.add('selected');
+            } else {
+                selectedDocuments.delete(fileName);
+                documentItem.classList.remove('selected');
+            }
+            
+            updateSelectedCount();
+            updateSelectAllCheckbox();
+        }
+        
+        // Update selected count display
+        function updateSelectedCount() {
+            const countElement = document.getElementById('selectedCount');
+            if (countElement) {
+                countElement.textContent = selectedDocuments.size;
+            }
+        }
+        
+        // Update select all checkbox state
+        function updateSelectAllCheckbox() {
+            const selectAll = document.getElementById('selectAllDocs');
+            const allCheckboxes = document.querySelectorAll('.document-item .document-checkbox');
+            
+            if (selectAll && allCheckboxes.length > 0) {
+                const allChecked = selectedDocuments.size === allCheckboxes.length;
+                const someChecked = selectedDocuments.size > 0 && selectedDocuments.size < allCheckboxes.length;
+                
+                selectAll.checked = allChecked;
+                selectAll.indeterminate = someChecked;
+            }
+        }
+        
+        // Handle select all functionality
+        function setupSelectAll() {
+            const selectAll = document.getElementById('selectAllDocs');
+            if (selectAll) {
+                selectAll.addEventListener('change', function() {
+                    const checkboxes = document.querySelectorAll('.document-item .document-checkbox');
+                    const documentItems = document.querySelectorAll('.document-item');
+                    
+                    checkboxes.forEach((checkbox, index) => {
+                        checkbox.checked = this.checked;
+                        if (this.checked) {
+                            selectedDocuments.add(checkbox.dataset.filename);
+                            documentItems[index].classList.add('selected');
+                        } else {
+                            selectedDocuments.delete(checkbox.dataset.filename);
+                            documentItems[index].classList.remove('selected');
+                        }
+                    });
+                    
+                    updateSelectedCount();
+                });
+            }
         }
 
         // Initialize system
@@ -1052,12 +1538,20 @@
             document.getElementById('spinnerContainer').style.display = 'block';
 
             try {
+                // Include selected documents and source count in query
+                const selectedDocs = Array.from(selectedDocuments);
+                const numSources = parseInt(document.getElementById('numSources').value) || 5;
+                
                 const response = await fetch('/query', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ query: query })
+                    body: JSON.stringify({ 
+                        query: query,
+                        selected_documents: selectedDocs,
+                        num_sources: numSources
+                    })
                 });
                 
                 const data = await response.json();
@@ -1137,9 +1631,15 @@
                     headerDiv.addEventListener('click', function() {
                         const toggle = this.querySelector('.references-toggle');
                         const content = this.parentElement.querySelector('.references-content');
+                        const chatMessages = document.getElementById('chatMessages');
                         
                         toggle.classList.toggle('expanded');
                         content.classList.toggle('expanded');
+                        
+                        // Scroll to bottom after expansion animation completes
+                        setTimeout(() => {
+                            chatMessages.scrollTop = chatMessages.scrollHeight;
+                        }, 300);
                     });
                     
                     referencesDiv.appendChild(headerDiv);
@@ -1153,7 +1653,11 @@
             messageDiv.appendChild(wrapperDiv);
             
             chatMessages.appendChild(messageDiv);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
+            
+            // Force scroll to bottom with a slight delay to ensure content is rendered
+            setTimeout(() => {
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }, 100);
         }
 
         function updateChatHistory(question, answer) {
@@ -1187,6 +1691,11 @@
                 chatMessages.innerHTML = '';
                 addMessageToChat('user', item.question);
                 addMessageToChat('assistant', item.answer);
+                
+                // Ensure scroll to bottom after loading history
+                setTimeout(() => {
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                }, 200);
             }
         }
 
@@ -1263,7 +1772,104 @@
             });
             
             updateStatus();
+            
+            // Initialize document selection
+            initializeDocumentSelection();
+            setupSelectAll();
+            
+            // Add window resize listener
+            window.addEventListener('resize', handleResize);
+            
+            // Add touch event handling for better mobile experience
+            setupTouchHandling();
         });
+        
+        // Fix mobile viewport height
+        function setMobileViewportHeight() {
+            // First we get the viewport height and multiply it by 1% to get a value for a vh unit
+            let vh = window.innerHeight * 0.01;
+            // Then we set the value in the --vh custom property
+            document.documentElement.style.setProperty('--vh', `${vh}px`);
+            
+            // For mobile browsers that hide/show address bar
+            if (window.innerWidth <= 768) {
+                const appLayout = document.querySelector('.app-layout');
+                const centerPanel = document.querySelector('.center-panel');
+                const actualHeight = window.innerHeight;
+                
+                if (appLayout) {
+                    appLayout.style.height = `${actualHeight}px`;
+                }
+                if (centerPanel) {
+                    centerPanel.style.height = `${actualHeight - 60}px`;
+                }
+            }
+        }
+        
+        // Setup touch handling for mobile
+        function setupTouchHandling() {
+            // Set initial viewport height
+            setMobileViewportHeight();
+            
+            // Update on resize and orientation change
+            window.addEventListener('resize', () => {
+                setMobileViewportHeight();
+                handleResize();
+            });
+            
+            window.addEventListener('orientationchange', () => {
+                setTimeout(setMobileViewportHeight, 100);
+            });
+            // Prevent double-tap zoom on buttons
+            const buttons = document.querySelectorAll('button, .clickable');
+            buttons.forEach(button => {
+                button.addEventListener('touchend', function(e) {
+                    e.preventDefault();
+                    // Trigger click after preventing default
+                    setTimeout(() => {
+                        if (this.onclick) {
+                            this.onclick();
+                        } else {
+                            this.click();
+                        }
+                    }, 10);
+                });
+            });
+            
+            // Close mobile panels when clicking outside
+            document.addEventListener('touchstart', function(e) {
+                const leftPanel = document.getElementById('leftPanel');
+                const rightPanel = document.getElementById('rightPanel');
+                const overlay = document.getElementById('mobileOverlay');
+                
+                if (window.innerWidth <= 768) {
+                    const isClickingPanel = leftPanel.contains(e.target) || rightPanel.contains(e.target);
+                    const isClickingToggle = e.target.closest('.header-btn');
+                    
+                    if (!isClickingPanel && !isClickingToggle && overlay.classList.contains('active')) {
+                        closeMobilePanels();
+                    }
+                }
+            });
+            
+            // Improve textarea handling on mobile
+            const textarea = document.getElementById('queryInput');
+            if (textarea) {
+                // Prevent zoom on iOS when focusing textarea
+                textarea.addEventListener('focus', function() {
+                    if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+                        this.style.fontSize = '16px';
+                    }
+                });
+                
+                // Auto-resize on mobile
+                textarea.addEventListener('input', function() {
+                    this.style.height = 'auto';
+                    const maxHeight = window.innerWidth <= 768 ? 120 : 150;
+                    this.style.height = Math.min(this.scrollHeight, maxHeight) + 'px';
+                });
+            }
+        }
     </script>
 </body>
 </html>
