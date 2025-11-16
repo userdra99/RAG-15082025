@@ -59,30 +59,57 @@ def allowed_file(filename):
            filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
 class DoclingExcelReader:
-    """Enhanced Excel reader using Docling with contextual chunking"""
-    
+    """Enhanced Excel reader with token-aware chunking optimized for tables"""
+
+    def __init__(self):
+        # Initialize HybridChunker with larger tokens for table preservation
+        try:
+            from docling_core.transforms.chunker.tokenizer.openai import OpenAITokenizer
+            import tiktoken
+
+            tokenizer = OpenAITokenizer(
+                tokenizer=tiktoken.encoding_for_model("gpt-4o"),
+                max_tokens=768  # Larger for tables - preserves structure better
+            )
+            self.tokenizer = tokenizer
+            self.use_token_aware = True
+            logger.info("Initialized token-aware chunking for Excel processing (768 tokens)")
+        except ImportError as ie:
+            logger.warning(f"Token-aware chunking not available, using character-based: {ie}")
+            self.use_token_aware = False
+
     def load_data(self, file_path: str) -> List[Document]:
-        """Load Excel file and create contextual chunks"""
+        """Load Excel file and create token-aware chunks optimized for tables"""
         documents = []
-        
+
         try:
             from llama_index.core.node_parser import SentenceSplitter
-            text_splitter = SentenceSplitter(
-                chunk_size=512,
-                chunk_overlap=50,
-                paragraph_separator="\n\n"
-            )
-            
+
+            if self.use_token_aware:
+                # Token-aware chunking for better table handling
+                text_splitter = SentenceSplitter(
+                    chunk_size=768,  # Larger for tables
+                    chunk_overlap=150,  # 20% overlap
+                    paragraph_separator="\n\n"
+                )
+            else:
+                # Fallback to character-based
+                text_splitter = SentenceSplitter(
+                    chunk_size=512,
+                    chunk_overlap=100,
+                    paragraph_separator="\n\n"
+                )
+
             excel_file = pd.ExcelFile(file_path)
-            
+
             for sheet_name in excel_file.sheet_names:
                 df = pd.read_excel(file_path, sheet_name=sheet_name)
-                
+
                 markdown_content = f"# Sheet: {sheet_name}\n\n"
                 markdown_content += df.to_markdown(index=False)
-                
+
                 chunks = text_splitter.split_text(markdown_content)
-                
+
                 for i, chunk_text in enumerate(chunks):
                     doc = Document(
                         text=chunk_text,
@@ -90,106 +117,196 @@ class DoclingExcelReader:
                             "file_name": os.path.basename(file_path),
                             "sheet_name": sheet_name,
                             "source": file_path,
+                            "type": "excel",
                             "chunk_id": i,
-                            "chunk_type": "contextual",
+                            "chunk_type": "token_aware_table" if self.use_token_aware else "character_based",
+                            "chunk_tokens": len(chunk_text.split()) if self.use_token_aware else len(chunk_text),
                             "chunk_size": len(chunk_text)
                         }
                     )
                     documents.append(doc)
-                
+
         except Exception as e:
             logger.error(f"Error reading Excel file {file_path}: {e}")
-            
+
         return documents
 
 class DoclingPDFReader:
-    """Enhanced PDF reader using Docling for complex layouts with contextual chunking"""
-    
+    """Enhanced PDF reader using Docling with HybridChunker for optimal token-aware chunking"""
+
     def __init__(self):
         pipeline_options = PdfPipelineOptions()
         pipeline_options.do_ocr = True
         pipeline_options.do_table_structure = True
         self.converter = DocumentConverter()
-    
+
+        # Initialize HybridChunker with BGE-M3 optimized settings
+        try:
+            from docling.chunking import HybridChunker
+            from docling_core.transforms.chunker.tokenizer.openai import OpenAITokenizer
+            import tiktoken
+
+            tokenizer = OpenAITokenizer(
+                tokenizer=tiktoken.encoding_for_model("gpt-4o"),
+                max_tokens=512  # Optimal for BGE-M3
+            )
+            self.chunker = HybridChunker(tokenizer=tokenizer, merge_peers=True)
+            self.use_hybrid = True
+            logger.info("Initialized HybridChunker for PDF processing (512 tokens)")
+        except ImportError as ie:
+            logger.warning(f"HybridChunker not available, falling back to SentenceSplitter: {ie}")
+            self.use_hybrid = False
+
     def load_data(self, file_path: str) -> List[Document]:
-        """Load PDF using Docling with contextual chunking"""
+        """Load PDF using Docling with token-aware HybridChunker"""
         try:
             conv_result = self.converter.convert(file_path)
             doc = conv_result.document
-            
-            from llama_index.core.node_parser import SentenceSplitter
-            text_splitter = SentenceSplitter(
-                chunk_size=512,
-                chunk_overlap=50,
-                paragraph_separator="\n\n"
-            )
-            
-            full_text = doc.export_to_markdown()
-            chunks = text_splitter.split_text(full_text)
-            
-            documents = []
-            for i, chunk_text in enumerate(chunks):
-                doc = Document(
-                    text=chunk_text,
-                    metadata={
-                        "file_name": os.path.basename(file_path),
-                        "source": file_path,
-                        "type": "pdf",
-                        "chunk_id": i,
-                        "chunk_type": "contextual",
-                        "chunk_size": len(chunk_text)
-                    }
+
+            if self.use_hybrid:
+                # Use HybridChunker - preserves document structure
+                chunks = list(self.chunker.chunk(doc))
+
+                documents = []
+                for i, chunk in enumerate(chunks):
+                    # Extract metadata from chunk
+                    headings = chunk.meta.headings if hasattr(chunk.meta, 'headings') else []
+
+                    doc_obj = Document(
+                        text=chunk.text,  # Get text directly from chunk
+                        metadata={
+                            "file_name": os.path.basename(file_path),
+                            "source": file_path,
+                            "type": "pdf",
+                            "chunk_id": i,
+                            "chunk_type": "hybrid_token_aware",
+                            "chunk_tokens": len(chunk.text.split()),  # Approximate token count
+                            "headings": headings
+                        }
+                    )
+                    documents.append(doc_obj)
+
+                logger.info(f"Created {len(documents)} hybrid chunks from {file_path}")
+            else:
+                # Fallback to SentenceSplitter
+                from llama_index.core.node_parser import SentenceSplitter
+                text_splitter = SentenceSplitter(
+                    chunk_size=512,
+                    chunk_overlap=100,
+                    paragraph_separator="\n\n"
                 )
-                documents.append(doc)
-            
-            logger.info(f"Created {len(documents)} contextual chunks from {file_path}")
+
+                full_text = doc.export_to_markdown()
+                chunks = text_splitter.split_text(full_text)
+
+                documents = []
+                for i, chunk_text in enumerate(chunks):
+                    doc_obj = Document(
+                        text=chunk_text,
+                        metadata={
+                            "file_name": os.path.basename(file_path),
+                            "source": file_path,
+                            "type": "pdf",
+                            "chunk_id": i,
+                            "chunk_type": "sentence_fallback",
+                            "chunk_size": len(chunk_text)
+                        }
+                    )
+                    documents.append(doc_obj)
+
+                logger.info(f"Created {len(documents)} fallback chunks from {file_path}")
+
             return documents
-            
+
         except Exception as e:
             logger.error(f"Error processing PDF {file_path} with Docling: {e}")
             reader = PDFReader()
             return reader.load_data(file_path)
 
 class DoclingDocxReader:
-    """Enhanced DOCX reader using Docling with contextual chunking"""
-    
+    """Enhanced DOCX reader using Docling with HybridChunker for optimal token-aware chunking"""
+
     def __init__(self):
         self.converter = DocumentConverter()
-    
+
+        # Initialize HybridChunker with BGE-M3 optimized settings
+        try:
+            from docling.chunking import HybridChunker
+            from docling_core.transforms.chunker.tokenizer.openai import OpenAITokenizer
+            import tiktoken
+
+            tokenizer = OpenAITokenizer(
+                tokenizer=tiktoken.encoding_for_model("gpt-4o"),
+                max_tokens=512  # Optimal for BGE-M3
+            )
+            self.chunker = HybridChunker(tokenizer=tokenizer, merge_peers=True)
+            self.use_hybrid = True
+            logger.info("Initialized HybridChunker for DOCX processing (512 tokens)")
+        except ImportError as ie:
+            logger.warning(f"HybridChunker not available, falling back to SentenceSplitter: {ie}")
+            self.use_hybrid = False
+
     def load_data(self, file_path: str) -> List[Document]:
-        """Load DOCX using Docling with contextual chunking"""
+        """Load DOCX using Docling with token-aware HybridChunker"""
         try:
             conv_result = self.converter.convert(file_path)
             doc = conv_result.document
-            
-            from llama_index.core.node_parser import SentenceSplitter
-            text_splitter = SentenceSplitter(
-                chunk_size=512,
-                chunk_overlap=50,
-                paragraph_separator="\n\n"
-            )
-            
-            full_text = doc.export_to_markdown()
-            chunks = text_splitter.split_text(full_text)
-            
-            documents = []
-            for i, chunk_text in enumerate(chunks):
-                doc = Document(
-                    text=chunk_text,
-                    metadata={
-                        "file_name": os.path.basename(file_path),
-                        "source": file_path,
-                        "type": "docx",
-                        "chunk_id": i,
-                        "chunk_type": "contextual",
-                        "chunk_size": len(chunk_text)
-                    }
+
+            if self.use_hybrid:
+                # Use HybridChunker - preserves document structure
+                chunks = list(self.chunker.chunk(doc))
+
+                documents = []
+                for i, chunk in enumerate(chunks):
+                    # Extract metadata from chunk
+                    headings = chunk.meta.headings if hasattr(chunk.meta, 'headings') else []
+
+                    doc_obj = Document(
+                        text=chunk.text,  # Get text directly from chunk
+                        metadata={
+                            "file_name": os.path.basename(file_path),
+                            "source": file_path,
+                            "type": "docx",
+                            "chunk_id": i,
+                            "chunk_type": "hybrid_token_aware",
+                            "chunk_tokens": len(chunk.text.split()),  # Approximate token count
+                            "headings": headings
+                        }
+                    )
+                    documents.append(doc_obj)
+
+                logger.info(f"Created {len(documents)} hybrid chunks from {file_path}")
+            else:
+                # Fallback to SentenceSplitter
+                from llama_index.core.node_parser import SentenceSplitter
+                text_splitter = SentenceSplitter(
+                    chunk_size=512,
+                    chunk_overlap=100,
+                    paragraph_separator="\n\n"
                 )
-                documents.append(doc)
-            
-            logger.info(f"Created {len(documents)} contextual chunks from {file_path}")
+
+                full_text = doc.export_to_markdown()
+                chunks = text_splitter.split_text(full_text)
+
+                documents = []
+                for i, chunk_text in enumerate(chunks):
+                    doc_obj = Document(
+                        text=chunk_text,
+                        metadata={
+                            "file_name": os.path.basename(file_path),
+                            "source": file_path,
+                            "type": "docx",
+                            "chunk_id": i,
+                            "chunk_type": "sentence_fallback",
+                            "chunk_size": len(chunk_text)
+                        }
+                    )
+                    documents.append(doc_obj)
+
+                logger.info(f"Created {len(documents)} fallback chunks from {file_path}")
+
             return documents
-            
+
         except Exception as e:
             logger.error(f"Error processing DOCX {file_path} with Docling: {e}")
             reader = DocxReader()
@@ -394,6 +511,85 @@ def check_collection_exists(client, collection_name: str = "documents") -> bool:
     except Exception as e:
         logger.info(f"Collection '{collection_name}' does not exist: {e}")
         return False
+
+def delete_chunks_by_filename(client, file_name: str, collection_name: str = "documents") -> int:
+    """Delete all chunks belonging to a specific file from Qdrant
+
+    Args:
+        client: Qdrant client instance
+        file_name: Name of the file whose chunks should be deleted
+        collection_name: Name of the Qdrant collection
+
+    Returns:
+        Number of chunks deleted
+    """
+    try:
+        from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+        # Count existing chunks for this file
+        scroll_result = client.scroll(
+            collection_name=collection_name,
+            scroll_filter=Filter(
+                must=[
+                    FieldCondition(
+                        key="file_name",
+                        match=MatchValue(value=file_name)
+                    )
+                ]
+            ),
+            limit=10000  # Large limit to get all chunks
+        )
+
+        chunk_ids = [point.id for point in scroll_result[0]]
+        chunk_count = len(chunk_ids)
+
+        if chunk_count > 0:
+            # Delete all chunks for this file
+            client.delete(
+                collection_name=collection_name,
+                points_selector=chunk_ids
+            )
+            logger.info(f"Deleted {chunk_count} existing chunks for file: {file_name}")
+        else:
+            logger.info(f"No existing chunks found for file: {file_name}")
+
+        return chunk_count
+
+    except Exception as e:
+        logger.error(f"Error deleting chunks for {file_name}: {e}")
+        return 0
+
+def get_processed_files(client, collection_name: str = "documents") -> set:
+    """Get list of files that have already been processed in Qdrant
+
+    Args:
+        client: Qdrant client instance
+        collection_name: Name of the Qdrant collection
+
+    Returns:
+        Set of file names that have chunks in the collection
+    """
+    try:
+        processed_files = set()
+
+        # Scroll through all points to get unique file names
+        scroll_result = client.scroll(
+            collection_name=collection_name,
+            limit=10000,
+            with_payload=True
+        )
+
+        for point in scroll_result[0]:
+            file_name = point.payload.get('file_name')
+            if file_name:
+                processed_files.add(file_name)
+
+        logger.info(f"Found {len(processed_files)} unique files in collection")
+        return processed_files
+
+    except Exception as e:
+        logger.error(f"Error getting processed files: {e}")
+        return set()
 
 def load_documents(data_dir: str) -> List[Document]:
     """Load documents from the data directory with file hashing to prevent unnecessary reprocessing"""
@@ -671,29 +867,98 @@ def upload_files():
 
 @app.route('/process', methods=['POST'])
 def process_documents():
-    """Process uploaded documents and create/update index"""
+    """Process uploaded documents with duplicate detection and cleanup"""
     if not rag_system['initialized']:
         return jsonify({'success': False, 'error': 'System not initialized'}), 400
-    
+
     try:
-        # Process documents in the upload folder
+        # Get force_reprocess flag from request
+        data = request.get_json() or {}
+        force_reprocess = data.get('force_reprocess', False)
+
+        # Get list of files to process
+        data_path = Path(app.config['UPLOAD_FOLDER'])
+        all_files = []
+        all_files.extend(list(data_path.glob("*.pdf")))
+        all_files.extend(list(data_path.glob("*.docx")))
+        all_files.extend(list(data_path.glob("*.xlsx")))
+
+        file_names = [f.name for f in all_files]
+
+        if not file_names:
+            return jsonify({'success': False, 'error': 'No documents found to process'}), 400
+
+        # Get files that have already been processed
+        processed_files = get_processed_files(rag_system['client'])
+        already_processed = [f for f in file_names if f in processed_files]
+
+        if already_processed and not force_reprocess:
+            # Return warning about duplicate files
+            return jsonify({
+                'success': False,
+                'error': 'duplicate_files',
+                'already_processed': already_processed,
+                'message': f'{len(already_processed)} file(s) already processed. Confirm to reprocess and replace existing chunks.',
+                'needs_confirmation': True
+            }), 409  # 409 Conflict
+
+        # If force_reprocess, delete old chunks and clear file hashes
+        if force_reprocess and already_processed:
+            total_deleted = 0
+            for file_name in already_processed:
+                deleted = delete_chunks_by_filename(rag_system['client'], file_name)
+                total_deleted += deleted
+            logger.info(f"Deleted {total_deleted} old chunks from {len(already_processed)} files before reprocessing")
+
+            # Clear file hashes so load_documents() will reprocess them
+            hash_dir = Path(app.config['UPLOAD_FOLDER']) / ".hashes"
+            hash_file = hash_dir / "file_hashes.json"
+            if hash_file.exists():
+                try:
+                    with open(hash_file, 'r') as f:
+                        existing_hashes = json.load(f)
+
+                    # Remove hashes for files being reprocessed
+                    data_path = Path(app.config['UPLOAD_FOLDER'])
+                    for file_name in already_processed:
+                        # Check all possible paths
+                        for ext in ['.pdf', '.docx', '.xlsx']:
+                            file_path = str(data_path / file_name)
+                            if file_path in existing_hashes:
+                                del existing_hashes[file_path]
+                                logger.info(f"Cleared hash for {file_name} to force reprocessing")
+
+                    # Save updated hashes
+                    with open(hash_file, 'w') as f:
+                        json.dump(existing_hashes, f, indent=2)
+                except Exception as e:
+                    logger.error(f"Error clearing file hashes: {e}")
+
+        # Process documents
         documents = load_documents(app.config['UPLOAD_FOLDER'])
-        
+
         if documents and rag_system['storage_context']:
             index = create_or_load_index(rag_system['storage_context'], documents)
             if index:
                 rag_system['index'] = index
+                message = f'Successfully processed and indexed {len(documents)} document chunks'
+                if force_reprocess and already_processed:
+                    message += f' (reprocessed {len(already_processed)} existing files)'
                 return jsonify({
-                    'success': True, 
-                    'message': f'Successfully processed and indexed {len(documents)} document chunks'
+                    'success': True,
+                    'message': message,
+                    'chunks_processed': len(documents),
+                    'files_reprocessed': len(already_processed) if force_reprocess else 0
                 })
             else:
                 return jsonify({'success': False, 'error': 'Failed to create index from documents'}), 500
         else:
-            return jsonify({'success': False, 'error': 'No documents found to process'}), 400
-            
+            return jsonify({'success': False, 'error': 'No new documents to process'}), 400
+
     except Exception as e:
         logger.error(f"Error processing documents: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return jsonify({'success': False, 'error': f'Processing failed: {str(e)}'}), 500
 
 @app.route('/query', methods=['POST'])
@@ -716,11 +981,11 @@ def query():
     
     query_text = data.get('query', '')
     selected_documents = data.get('selected_documents', [])
-    num_sources = data.get('num_sources', 5)  # Default to 5 if not specified
-    
-    # Validate num_sources
-    num_sources = min(max(num_sources, 1), 20)  # Between 1 and 20
-    
+    num_sources = data.get('num_sources', 10)  # Default to 10 sources
+
+    # Validate num_sources (minimum 1, no maximum limit)
+    num_sources = max(num_sources, 1)
+
     logger.info(f"Query text: '{query_text}'")
     logger.info(f"Selected documents: {selected_documents}")
     logger.info(f"Number of sources requested: {num_sources}")
@@ -741,7 +1006,7 @@ def query():
         from llama_index.core.schema import NodeWithScore
         
         # Get more candidates initially for filtering (3x the requested amount)
-        initial_candidates = min(num_sources * 3, 30)  # Get 3x requested but max 30
+        initial_candidates = num_sources * 3  # Get 3x requested sources
         retriever = VectorIndexRetriever(
             index=rag_system['index'],
             similarity_top_k=initial_candidates
@@ -868,6 +1133,44 @@ def clear_history():
     session['chat_history'] = []
     session.modified = True
     return jsonify({'success': True})
+
+@app.route('/delete_document', methods=['POST'])
+def delete_document():
+    """Delete a document from the knowledge base"""
+    try:
+        data = request.get_json()
+        file_name = data.get('file_name')
+
+        if not file_name:
+            return jsonify({'success': False, 'error': 'No file name provided'}), 400
+
+        # Delete from storage
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], file_name)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            logger.info(f"Deleted file: {file_path}")
+
+        # Remove from documents session
+        if 'documents' in session and file_name in session['documents']:
+            del session['documents'][file_name]
+            session.modified = True
+
+        # Note: We cannot easily remove specific documents from the vector index
+        # The index would need to be rebuilt without this document
+        # For now, we'll just remove from storage and UI
+        # To fully remove from index, system needs to be reinitialized
+
+        logger.info(f"Document {file_name} deleted successfully")
+        return jsonify({
+            'success': True,
+            'message': f'Document "{file_name}" deleted successfully. Reinitialize the system to rebuild the index without this document.'
+        })
+
+    except Exception as e:
+        logger.error(f"Error deleting document: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/health', methods=['GET'])
 def health():

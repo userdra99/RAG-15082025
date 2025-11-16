@@ -339,6 +339,62 @@
             accent-color: var(--accent-primary);
         }
 
+        .document-search-container {
+            position: relative;
+            margin-bottom: 12px;
+        }
+
+        .document-search-input {
+            width: 100%;
+            padding: 10px 36px 10px 36px;
+            border: 2px solid var(--border-light);
+            border-radius: 8px;
+            font-size: 13px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            transition: all 0.2s;
+        }
+
+        .document-search-input:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+            background: var(--bg-secondary);
+            box-shadow: 0 0 0 3px rgba(66, 133, 244, 0.1);
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-secondary);
+            font-size: 14px;
+            pointer-events: none;
+        }
+
+        .search-clear-btn {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 24px;
+            height: 24px;
+            border-radius: 12px;
+            background: transparent;
+            border: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: var(--text-secondary);
+            transition: all 0.2s;
+        }
+
+        .search-clear-btn:hover {
+            background: var(--bg-tertiary);
+            color: var(--accent-primary);
+        }
+
         .select-all-container {
             padding: 8px 12px;
             background: var(--bg-accent);
@@ -357,6 +413,35 @@
             font-weight: 500;
             color: var(--text-primary);
             cursor: pointer;
+        }
+
+        .document-item.hidden {
+            display: none;
+        }
+
+        .doc-delete-btn {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            background: transparent;
+            border: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: var(--text-secondary);
+            transition: all 0.2s;
+            opacity: 0;
+            margin-left: auto;
+        }
+
+        .document-item:hover .doc-delete-btn {
+            opacity: 1;
+        }
+
+        .doc-delete-btn:hover {
+            background: #fee;
+            color: var(--danger);
         }
 
         .doc-icon {
@@ -585,41 +670,6 @@
             align-items: flex-end;
         }
 
-        .query-options {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 8px 16px;
-            background: var(--bg-tertiary);
-            border-bottom: 1px solid var(--border-light);
-            border-radius: 12px 12px 0 0;
-            font-size: 13px;
-        }
-
-        .sources-control {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .sources-control label {
-            color: var(--text-secondary);
-            font-weight: 500;
-        }
-
-        .sources-control input[type="number"] {
-            width: 60px;
-            padding: 4px 8px;
-            border: 1px solid var(--border-light);
-            border-radius: 4px;
-            background: var(--bg-secondary);
-            color: var(--text-primary);
-        }
-
-        .sources-control input[type="range"] {
-            width: 100px;
-            accent-color: var(--accent-primary);
-        }
 
         .input-container {
             flex: 1;
@@ -935,23 +985,6 @@
             }
             
             /* Input area mobile improvements */
-            .query-options {
-                flex-direction: column;
-                gap: 8px;
-                padding: 12px;
-                align-items: stretch;
-            }
-            
-            .sources-control {
-                flex-direction: column;
-                gap: 4px;
-                align-items: stretch;
-            }
-            
-            .sources-control input[type="range"] {
-                width: 100%;
-            }
-            
             .chat-input-area {
                 padding: 12px;
                 gap: 8px;
@@ -1097,13 +1130,23 @@
                 <div style="margin-bottom: 16px;">
                     <div style="font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Knowledge Base</div>
                     {% if documents %}
+                        <!-- Search box -->
+                        <div class="document-search-container">
+                            <i class="fas fa-search search-icon"></i>
+                            <input type="text" id="documentSearch" class="document-search-input" placeholder="Search documents..." oninput="filterDocuments()">
+                            <button class="search-clear-btn" id="searchClearBtn" onclick="clearDocumentSearch()" style="display: none;">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    {% endif %}
+                    {% if documents %}
                         <div class="select-all-container">
                             <label class="select-all-label">
                                 <input type="checkbox" id="selectAllDocs" class="document-checkbox" checked>
-                                <span>Select All Documents</span>
+                                <span>Select All</span>
                             </label>
                             <small style="color: var(--text-secondary);">
-                                <span id="selectedCount">{{ documents.keys()|length }}</span>/{{ documents.keys()|length }} selected
+                                <span id="selectedCount">{{ documents.keys()|length }}</span>/<span id="visibleCount">{{ documents.keys()|length }}</span> selected
                             </small>
                         </div>
                     {% endif %}
@@ -1127,6 +1170,9 @@
                                         <div class="doc-name">{{ file_name }}</div>
                                         <div class="doc-meta">{{ info.count }} chunks • Ready</div>
                                     </div>
+                                    <button class="doc-delete-btn" onclick="deleteDocument(event, '{{ file_name }}')" title="Delete document">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
                                 </div>
                             {% endfor %}
                             <div style="margin-top: 12px; padding: 8px; background: var(--bg-accent); border-radius: 6px; text-align: center;">
@@ -1158,15 +1204,6 @@
                 
                 <!-- Input area wrapper to keep at bottom -->
                 <div class="chat-input-wrapper">
-                    <div class="query-options">
-                        <div class="sources-control">
-                            <label for="numSources">Number of sources:</label>
-                            <input type="number" id="numSources" min="1" max="20" value="5" onchange="updateSourcesValue(this.value)">
-                            <input type="range" id="numSourcesSlider" min="1" max="20" value="5" onchange="updateSourcesInput(this.value)">
-                        </div>
-                        <small style="color: var(--text-muted);">Adjust how many reference sources to retrieve (1-20)</small>
-                    </div>
-                    
                     <div class="chat-input-area">
                         <div class="input-container">
                             <textarea class="chat-input" placeholder="Ask me anything about your documents..." rows="1" id="queryInput"></textarea>
@@ -1355,16 +1392,7 @@
 
         // Document selection tracking
         let selectedDocuments = new Set();
-        
-        // Source count control functions
-        function updateSourcesValue(value) {
-            document.getElementById('numSourcesSlider').value = value;
-        }
-        
-        function updateSourcesInput(value) {
-            document.getElementById('numSources').value = value;
-        }
-        
+
         // Initialize selected documents
         function initializeDocumentSelection() {
             const checkboxes = document.querySelectorAll('.document-item .document-checkbox');
@@ -1397,8 +1425,16 @@
         // Update selected count display
         function updateSelectedCount() {
             const countElement = document.getElementById('selectedCount');
+            const visibleCountElement = document.getElementById('visibleCount');
+
             if (countElement) {
                 countElement.textContent = selectedDocuments.size;
+            }
+
+            // Update visible count (documents not hidden by search)
+            if (visibleCountElement) {
+                const visibleDocs = document.querySelectorAll('.document-item:not(.hidden)');
+                visibleCountElement.textContent = visibleDocs.length;
             }
         }
         
@@ -1421,22 +1457,127 @@
             const selectAll = document.getElementById('selectAllDocs');
             if (selectAll) {
                 selectAll.addEventListener('change', function() {
-                    const checkboxes = document.querySelectorAll('.document-item .document-checkbox');
-                    const documentItems = document.querySelectorAll('.document-item');
-                    
-                    checkboxes.forEach((checkbox, index) => {
+                    // Only affect visible documents
+                    const visibleItems = document.querySelectorAll('.document-item:not(.hidden)');
+
+                    visibleItems.forEach(item => {
+                        const checkbox = item.querySelector('.document-checkbox');
                         checkbox.checked = this.checked;
+
                         if (this.checked) {
                             selectedDocuments.add(checkbox.dataset.filename);
-                            documentItems[index].classList.add('selected');
+                            item.classList.add('selected');
                         } else {
                             selectedDocuments.delete(checkbox.dataset.filename);
-                            documentItems[index].classList.remove('selected');
+                            item.classList.remove('selected');
                         }
                     });
-                    
+
                     updateSelectedCount();
                 });
+            }
+        }
+
+        // Filter documents by search term
+        function filterDocuments() {
+            const searchInput = document.getElementById('documentSearch');
+            const searchTerm = searchInput.value.toLowerCase().trim();
+            const clearBtn = document.getElementById('searchClearBtn');
+            const documentItems = document.querySelectorAll('.document-item');
+
+            // Show/hide clear button
+            clearBtn.style.display = searchTerm ? 'flex' : 'none';
+
+            let visibleCount = 0;
+
+            documentItems.forEach(item => {
+                const fileName = item.dataset.filename.toLowerCase();
+
+                if (fileName.includes(searchTerm)) {
+                    item.classList.remove('hidden');
+                    visibleCount++;
+                } else {
+                    item.classList.add('hidden');
+                }
+            });
+
+            // Update counts
+            updateSelectedCount();
+            updateSelectAllCheckbox();
+
+            // Show "no results" message if needed
+            const documentsList = document.getElementById('documentsList');
+            let noResultsMsg = document.getElementById('noSearchResults');
+
+            if (visibleCount === 0 && searchTerm) {
+                if (!noResultsMsg) {
+                    noResultsMsg = document.createElement('div');
+                    noResultsMsg.id = 'noSearchResults';
+                    noResultsMsg.style.cssText = 'text-align: center; padding: 20px; color: var(--text-secondary);';
+                    noResultsMsg.innerHTML = `
+                        <i class="fas fa-search" style="font-size: 24px; margin-bottom: 8px; opacity: 0.5;"></i>
+                        <p style="margin: 0; font-size: 13px;">No documents found matching "${searchTerm}"</p>
+                    `;
+                    documentsList.appendChild(noResultsMsg);
+                }
+            } else if (noResultsMsg) {
+                noResultsMsg.remove();
+            }
+        }
+
+        // Clear document search
+        function clearDocumentSearch() {
+            const searchInput = document.getElementById('documentSearch');
+            searchInput.value = '';
+            filterDocuments();
+            searchInput.focus();
+        }
+
+        // Delete document
+        async function deleteDocument(event, fileName) {
+            event.stopPropagation();
+
+            if (!confirm(`Are you sure you want to delete "${fileName}"? This will remove it from the knowledge base.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/delete_document', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ file_name: fileName })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // Remove from selected documents
+                    selectedDocuments.delete(fileName);
+
+                    // Remove from UI
+                    const docItem = document.querySelector(`.document-item[data-filename="${fileName}"]`);
+                    if (docItem) {
+                        docItem.remove();
+                    }
+
+                    // Update counts
+                    updateSelectedCount();
+                    updateSelectAllCheckbox();
+
+                    // Check if no documents left
+                    const remainingDocs = document.querySelectorAll('.document-item');
+                    if (remainingDocs.length === 0) {
+                        location.reload(); // Reload to show empty state
+                    }
+
+                    alert(data.message);
+                } else {
+                    alert('Error deleting document: ' + data.error);
+                }
+            } catch (error) {
+                alert('Error deleting document: ' + error);
             }
         }
 
@@ -1497,24 +1638,66 @@
                 const uploadData = await uploadResponse.json();
                 if (uploadData.success) {
                     alert(uploadData.message + ' Processing documents...');
-                    
+
                     // Then automatically process them
-                    const processResponse = await fetch('/process', {
-                        method: 'POST'
-                    });
-                    
-                    const processData = await processResponse.json();
-                    if (processData.success) {
-                        alert('Documents processed successfully: ' + processData.message);
-                        location.reload();
-                    } else {
-                        alert('Processing failed: ' + processData.error);
-                    }
+                    await processDocumentsWithConfirmation(false);
                 } else {
                     alert('Upload failed: ' + uploadData.error);
                 }
             } catch (error) {
                 alert('Error uploading/processing files: ' + error);
+            }
+        }
+
+        // Process documents with duplicate detection and confirmation
+        async function processDocumentsWithConfirmation(forceReprocess = false) {
+            try {
+                const processResponse = await fetch('/process', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        force_reprocess: forceReprocess
+                    })
+                });
+
+                const processData = await processResponse.json();
+
+                if (processResponse.status === 409 && processData.needs_confirmation) {
+                    // Duplicate files detected - show confirmation dialog
+                    const fileList = processData.already_processed.join('\n• ');
+                    const confirmed = confirm(
+                        `⚠️ Duplicate Files Detected\n\n` +
+                        `The following ${processData.already_processed.length} file(s) have already been processed:\n\n` +
+                        `• ${fileList}\n\n` +
+                        `Reprocessing will:\n` +
+                        `✓ Delete old chunks from these files\n` +
+                        `✓ Replace with new chunks using improved chunking (512 tokens)\n` +
+                        `✓ Update the vector database\n\n` +
+                        `Do you want to reprocess these files?`
+                    );
+
+                    if (confirmed) {
+                        // User confirmed - reprocess with force flag
+                        await processDocumentsWithConfirmation(true);
+                    } else {
+                        alert('Processing cancelled. Existing files were not reprocessed.');
+                        location.reload();
+                    }
+                } else if (processData.success) {
+                    let message = 'Documents processed successfully: ' + processData.message;
+                    if (processData.files_reprocessed > 0) {
+                        message += `\n\n✅ Reprocessed ${processData.files_reprocessed} existing file(s)`;
+                        message += `\n📊 Total chunks: ${processData.chunks_processed}`;
+                    }
+                    alert(message);
+                    location.reload();
+                } else {
+                    alert('Processing failed: ' + processData.error);
+                }
+            } catch (error) {
+                alert('Error processing documents: ' + error);
             }
         }
 
@@ -1538,19 +1721,18 @@
             document.getElementById('spinnerContainer').style.display = 'block';
 
             try {
-                // Include selected documents and source count in query
+                // Include selected documents in query (use default source count of 10)
                 const selectedDocs = Array.from(selectedDocuments);
-                const numSources = parseInt(document.getElementById('numSources').value) || 5;
-                
+
                 const response = await fetch('/query', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ 
+                    body: JSON.stringify({
                         query: query,
                         selected_documents: selectedDocs,
-                        num_sources: numSources
+                        num_sources: 10
                     })
                 });
                 
