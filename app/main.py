@@ -775,22 +775,23 @@ def index():
     """Main page"""
     collection_exists = False
     documents = {}
-    total_docs = 0
-    
+    total_chunks = 0
+    unique_files = 0
+
     if rag_system['initialized'] and rag_system['client']:
         collection_exists = check_collection_exists(rag_system['client'])
-        
+
         if collection_exists:
             try:
                 collection_info = rag_system['client'].get_collection("documents")
-                total_docs = collection_info.points_count
-                
+                total_chunks = collection_info.points_count
+
                 scroll_result = rag_system['client'].scroll(
                     collection_name="documents",
-                    limit=100,
+                    limit=1000,  # Increased to get all unique files
                     with_payload=True
                 )
-                
+
                 for point in scroll_result[0]:
                     file_name = point.payload.get('file_name', 'Unknown')
                     if file_name not in documents:
@@ -800,15 +801,18 @@ def index():
                             'source': point.payload.get('source', 'unknown')
                         }
                     documents[file_name]['count'] += 1
-                    
+
+                unique_files = len(documents)
+
             except Exception as e:
                 logger.error(f"Error accessing collection: {e}")
-    
-    return render_template('index.html', 
+
+    return render_template('index.html',
                          initialized=rag_system['initialized'],
                          collection_exists=collection_exists,
                          documents=documents,
-                         total_docs=total_docs,
+                         total_chunks=total_chunks,
+                         unique_files=unique_files,
                          chat_history=session.get('chat_history', []))
 
 @app.route('/initialize', methods=['POST'])
