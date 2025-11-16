@@ -29,6 +29,7 @@ requests==2.32.3
 tiktoken==0.8.0
 fastembed==0.3.6
 httpx==0.27.2
+tree-sitter==0.22.3
 
 # Enhanced retrieval - compatible with BGE-M3
 sentence-transformers==2.7.0
@@ -37,3 +38,18 @@ torch==2.4.1
 
 # BGE-M3 specific requirements
 FlagEmbedding==1.2.11
+
+# HybridChunker dependencies
+docling-core[chunking-openai]
+semchunk==2.2.2
+mpire==2.10.2
+tree-sitter==0.25.2
+tree-sitter-c
+tree-sitter-cpp
+tree-sitter-go
+tree-sitter-java
+tree-sitter-javascript
+tree-sitter-python
+tree-sitter-ruby
+tree-sitter-rust
+tree-sitter-typescript

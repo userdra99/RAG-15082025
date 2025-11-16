@@ -142,7 +142,7 @@ class DoclingPDFReader:
 
         # Initialize HybridChunker with BGE-M3 optimized settings
         try:
-            from docling.chunking import HybridChunker
+            from docling_core.transforms.chunker.hybrid_chunker import HybridChunker
             from docling_core.transforms.chunker.tokenizer.openai import OpenAITokenizer
             import tiktoken
 
@@ -231,7 +231,7 @@ class DoclingDocxReader:
 
         # Initialize HybridChunker with BGE-M3 optimized settings
         try:
-            from docling.chunking import HybridChunker
+            from docling_core.transforms.chunker.hybrid_chunker import HybridChunker
             from docling_core.transforms.chunker.tokenizer.openai import OpenAITokenizer
             import tiktoken
 
