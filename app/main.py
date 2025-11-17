@@ -10,9 +10,9 @@ from flask import Flask, render_template, request, jsonify, flash, redirect, url
 from werkzeug.utils import secure_filename
 
 from llama_index.core import (
-    VectorStoreIndex, 
-    SimpleDirectoryReader, 
-    Settings, 
+    VectorStoreIndex,
+    SimpleDirectoryReader,
+    Settings,
     StorageContext,
     Document
 )
@@ -27,6 +27,8 @@ from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 
 import qdrant_client
+
+from progress_tracker import get_tracker, reset_tracker
 
 CUSTOM_MODEL_CONFIG = {
     "unsloth/Llama-3.2-3B-Instruct": {
@@ -591,19 +593,24 @@ def get_processed_files(client, collection_name: str = "documents") -> set:
         logger.error(f"Error getting processed files: {e}")
         return set()
 
-def load_documents(data_dir: str) -> List[Document]:
-    """Load documents from the data directory with file hashing to prevent unnecessary reprocessing"""
+def load_documents(data_dir: str, tracker=None) -> List[Document]:
+    """Load documents from the data directory with file hashing to prevent unnecessary reprocessing
+
+    Args:
+        data_dir: Directory containing documents
+        tracker: Optional progress tracker for emitting progress events
+    """
     documents = []
     data_path = Path(data_dir)
-    
+
     if not data_path.exists():
         data_path.mkdir(parents=True, exist_ok=True)
         return documents
-    
+
     hash_dir = data_path / ".hashes"
     hash_dir.mkdir(exist_ok=True)
     hash_file = hash_dir / "file_hashes.json"
-    
+
     existing_hashes = {}
     if hash_file.exists():
         try:
@@ -611,15 +618,18 @@ def load_documents(data_dir: str) -> List[Document]:
                 existing_hashes = json.load(f)
         except Exception as e:
             logger.warning(f"Could not load existing hashes: {e}")
-    
+
     current_hashes = {}
     processed_files = []
-    
+
     supported_files = []
     supported_files.extend(list(data_path.glob("*.pdf")))
     supported_files.extend(list(data_path.glob("*.docx")))
     supported_files.extend(list(data_path.glob("*.xlsx")))
-    
+
+    if tracker:
+        tracker.emit('status', {'message': 'Checking files for changes...', 'files_found': len(supported_files)})
+
     for file_path in supported_files:
         try:
             with open(file_path, 'rb') as f:
@@ -628,7 +638,7 @@ def load_documents(data_dir: str) -> List[Document]:
         except Exception as e:
             logger.error(f"Error calculating hash for {file_path}: {e}")
             current_hashes[str(file_path)] = "error"
-    
+
     files_to_process = []
     for file_path, current_hash in current_hashes.items():
         file_path_obj = Path(file_path)
@@ -636,66 +646,110 @@ def load_documents(data_dir: str) -> List[Document]:
             files_to_process.append(file_path_obj)
         else:
             logger.info(f"Skipping unchanged file: {file_path_obj.name}")
-    
+
     if not files_to_process:
         logger.info("No new or changed files to process")
+        if tracker:
+            tracker.emit('status', {'message': 'No new files to process', 'skipped': len(supported_files)})
         return documents
-    
+
+    if tracker:
+        tracker.emit('status', {'message': f'Processing {len(files_to_process)} new/changed files...', 'total_files': len(files_to_process)})
+
     pdf_files = [f for f in files_to_process if f.suffix.lower() == '.pdf']
     docx_files = [f for f in files_to_process if f.suffix.lower() == '.docx']
     xlsx_files = [f for f in files_to_process if f.suffix.lower() == '.xlsx']
-    
+
+    file_index = 0
+    total_files = len(files_to_process)
+
     if pdf_files:
         pdf_reader = DoclingPDFReader()
         for pdf_file in pdf_files:
+            file_index += 1
+            if tracker:
+                tracker.emit('progress', {
+                    'current': file_index,
+                    'total': total_files,
+                    'filename': pdf_file.name,
+                    'message': f'Processing PDF {file_index}/{total_files}: {pdf_file.name}'
+                })
             try:
                 docs = pdf_reader.load_data(str(pdf_file))
                 documents.extend(docs)
                 logger.info(f"Loaded {len(docs)} documents from {pdf_file}")
                 processed_files.append(str(pdf_file))
+                if tracker:
+                    tracker.emit('file_complete', {'filename': pdf_file.name, 'chunks': len(docs)})
             except Exception as e:
                 logger.error(f"Error loading PDF {pdf_file}: {e}")
-    
+                if tracker:
+                    tracker.emit('error', {'filename': pdf_file.name, 'error': str(e)})
+
     if docx_files:
         docx_reader = DoclingDocxReader()
         for docx_file in docx_files:
+            file_index += 1
+            if tracker:
+                tracker.emit('progress', {
+                    'current': file_index,
+                    'total': total_files,
+                    'filename': docx_file.name,
+                    'message': f'Processing DOCX {file_index}/{total_files}: {docx_file.name}'
+                })
             try:
                 docs = docx_reader.load_data(str(docx_file))
                 documents.extend(docs)
                 logger.info(f"Loaded {len(docs)} documents from {docx_file}")
                 processed_files.append(str(docx_file))
+                if tracker:
+                    tracker.emit('file_complete', {'filename': docx_file.name, 'chunks': len(docs)})
             except Exception as e:
                 logger.error(f"Error loading DOCX {docx_file}: {e}")
-    
+                if tracker:
+                    tracker.emit('error', {'filename': docx_file.name, 'error': str(e)})
+
     if xlsx_files:
         excel_reader = DoclingExcelReader()
         for xlsx_file in xlsx_files:
+            file_index += 1
+            if tracker:
+                tracker.emit('progress', {
+                    'current': file_index,
+                    'total': total_files,
+                    'filename': xlsx_file.name,
+                    'message': f'Processing XLSX {file_index}/{total_files}: {xlsx_file.name}'
+                })
             try:
                 docs = excel_reader.load_data(str(xlsx_file))
                 documents.extend(docs)
                 logger.info(f"Loaded {len(docs)} contextual chunks from {xlsx_file}")
                 processed_files.append(str(xlsx_file))
+                if tracker:
+                    tracker.emit('file_complete', {'filename': xlsx_file.name, 'chunks': len(docs)})
             except Exception as e:
                 logger.error(f"Error loading Excel {xlsx_file}: {e}")
-    
+                if tracker:
+                    tracker.emit('error', {'filename': xlsx_file.name, 'error': str(e)})
+
     if processed_files or existing_hashes != current_hashes:
         for file_path, current_hash in current_hashes.items():
             if file_path in [str(p) for p in processed_files]:
                 existing_hashes[file_path] = current_hash
             elif file_path not in existing_hashes:
                 existing_hashes[file_path] = current_hash
-        
+
         files_to_remove = [f for f in existing_hashes.keys() if not Path(f).exists()]
         for file_to_remove in files_to_remove:
             del existing_hashes[file_to_remove]
-        
+
         try:
             with open(hash_file, 'w') as f:
                 json.dump(existing_hashes, f, indent=2)
             logger.info(f"Updated file hashes for {len(processed_files)} processed files")
         except Exception as e:
             logger.error(f"Error saving file hashes: {e}")
-    
+
     return documents
 
 def create_or_load_index(storage_context, documents: List[Document] = None, mode: str = "incremental") -> VectorStoreIndex:
@@ -965,6 +1019,49 @@ def process_documents():
         logger.error(traceback.format_exc())
         return jsonify({'success': False, 'error': f'Processing failed: {str(e)}'}), 500
 
+@app.route('/process-stream', methods=['GET'])
+def process_documents_stream():
+    """Process uploaded documents with Server-Sent Events for progress tracking"""
+    def generate():
+        tracker = reset_tracker()
+
+        try:
+            if not rag_system['initialized']:
+                tracker.emit('error', {'message': 'System not initialized'})
+                tracker.complete()
+                yield from tracker.get_events()
+                return
+
+            tracker.emit('status', {'message': 'Starting document processing...'})
+
+            # Process documents with progress tracking
+            documents = load_documents(app.config['UPLOAD_FOLDER'], tracker=tracker)
+
+            if documents and rag_system['storage_context']:
+                tracker.emit('status', {'message': 'Creating index from documents...'})
+                index = create_or_load_index(rag_system['storage_context'], documents)
+                if index:
+                    rag_system['index'] = index
+                    tracker.emit('complete', {
+                        'message': f'Successfully processed {len(documents)} document chunks',
+                        'chunks_processed': len(documents)
+                    })
+                else:
+                    tracker.emit('error', {'message': 'Failed to create index from documents'})
+            else:
+                tracker.emit('complete', {'message': 'No new documents to process', 'chunks_processed': 0})
+
+        except Exception as e:
+            logger.error(f"Error processing documents: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            tracker.emit('error', {'message': f'Processing failed: {str(e)}'})
+
+        tracker.complete()
+        yield from tracker.get_events()
+
+    return app.response_class(generate(), mimetype='text/event-stream')
+
 @app.route('/query', methods=['POST'])
 def query():
     """Handle search queries with document filtering and relevance boosting"""
@@ -1008,37 +1105,74 @@ def query():
         from llama_index.core import VectorStoreIndex
         from llama_index.core.retrievers import VectorIndexRetriever
         from llama_index.core.schema import NodeWithScore
-        from llama_index.core.vector_stores import MetadataFilters, ExactMatchFilter, FilterOperator
+        from qdrant_client.models import Filter, FieldCondition, MatchAny
 
-        # Build metadata filters for selected documents (apply at Qdrant level)
-        filters = None
+        # Build Qdrant native filter for selected documents
+        qdrant_filter = None
         if selected_documents:
-            # Create OR filter for selected documents
-            filter_list = [
-                ExactMatchFilter(key="file_name", value=doc_name)
-                for doc_name in selected_documents
-            ]
-            filters = MetadataFilters(
-                filters=filter_list,
-                condition="or"  # Match any of the selected documents
+            # Use Qdrant's native filter format
+            # Note: file_name is stored at top level of payload, not under metadata
+            qdrant_filter = Filter(
+                must=[
+                    FieldCondition(
+                        key="file_name",  # Direct key, not metadata.file_name
+                        match=MatchAny(any=selected_documents)
+                    )
+                ]
             )
-            logger.info(f"Applied metadata filters for documents: {selected_documents}")
+            logger.info(f"Applied Qdrant filter for documents: {selected_documents}")
 
         # Adjust candidates based on whether we're filtering
         # When filtering, get more candidates since we're searching within subset
         # When not filtering, get 2x to allow for boosting
-        initial_candidates = num_sources * 2 if not filters else num_sources * 3
+        initial_candidates = num_sources * 2 if not qdrant_filter else num_sources * 3
 
-        retriever = VectorIndexRetriever(
-            index=rag_system['index'],
-            similarity_top_k=initial_candidates,
-            filters=filters  # Apply filter at Qdrant search level
+        # Create embedding for the query
+        query_embedding = Settings.embed_model.get_query_embedding(query_text)
+
+        # Query Qdrant client directly with native filter
+        from qdrant_client.models import SearchRequest
+
+        search_result = rag_system['client'].search(
+            collection_name="documents",
+            query_vector=query_embedding,
+            limit=initial_candidates,
+            query_filter=qdrant_filter,  # Apply Qdrant native filter
+            with_payload=True
         )
 
-        # Retrieve nodes (already filtered by Qdrant)
-        nodes = retriever.retrieve(query_text)
+        logger.info(f"Qdrant search returned {len(search_result)} points")
 
-        logger.info(f"Retrieved {len(nodes)} nodes after Qdrant filtering")
+        # Convert Qdrant search results to LlamaIndex nodes
+        from llama_index.core.schema import TextNode
+        import json
+
+        nodes = []
+        for scored_point in search_result:
+            # Extract node data from payload
+            node_content = scored_point.payload.get('_node_content', '{}')
+            if isinstance(node_content, str):
+                node_data = json.loads(node_content)
+            else:
+                node_data = node_content
+
+            # Recreate TextNode from stored data
+            text_node = TextNode(
+                id_=node_data.get('id_'),
+                text=node_data.get('text', ''),
+                metadata=node_data.get('metadata', {}),
+                excluded_embed_metadata_keys=node_data.get('excluded_embed_metadata_keys', []),
+                excluded_llm_metadata_keys=node_data.get('excluded_llm_metadata_keys', [])
+            )
+
+            # Create NodeWithScore
+            node_with_score = NodeWithScore(
+                node=text_node,
+                score=scored_point.score
+            )
+            nodes.append(node_with_score)
+
+        logger.info(f"Converted {len(nodes)} Qdrant points to nodes")
 
         # Boost nodes based on filename relevance
         filtered_and_boosted_nodes = []
@@ -1089,14 +1223,7 @@ def query():
         # Log the final selection for debugging
         for item in filtered_and_boosted_nodes[:num_sources]:
             logger.info(f"Selected: {item['file_name']} - Original: {item['original_score']:.3f}, Boosted: {item['boosted_score']:.3f}")
-        
-        # Use the filtered nodes for response generation
-        from llama_index.core.query_engine import RetrieverQueryEngine
-        query_engine = RetrieverQueryEngine.from_args(
-            retriever=retriever,
-            llm=Settings.llm
-        )
-        
+
         # Generate response using LLM with the top nodes
         from llama_index.core.response_synthesizers import get_response_synthesizer
         response_synthesizer = get_response_synthesizer()
