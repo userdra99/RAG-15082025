@@ -1003,36 +1003,52 @@ def query():
     try:
         # Extract keywords from query for filename matching
         query_keywords = query_text.lower().split()
-        
+
         # Create custom retriever with filtering and boosting
         from llama_index.core import VectorStoreIndex
         from llama_index.core.retrievers import VectorIndexRetriever
         from llama_index.core.schema import NodeWithScore
-        
-        # Get more candidates initially for filtering (3x the requested amount)
-        initial_candidates = num_sources * 3  # Get 3x requested sources
+        from llama_index.core.vector_stores import MetadataFilters, ExactMatchFilter, FilterOperator
+
+        # Build metadata filters for selected documents (apply at Qdrant level)
+        filters = None
+        if selected_documents:
+            # Create OR filter for selected documents
+            filter_list = [
+                ExactMatchFilter(key="file_name", value=doc_name)
+                for doc_name in selected_documents
+            ]
+            filters = MetadataFilters(
+                filters=filter_list,
+                condition="or"  # Match any of the selected documents
+            )
+            logger.info(f"Applied metadata filters for documents: {selected_documents}")
+
+        # Adjust candidates based on whether we're filtering
+        # When filtering, get more candidates since we're searching within subset
+        # When not filtering, get 2x to allow for boosting
+        initial_candidates = num_sources * 2 if not filters else num_sources * 3
+
         retriever = VectorIndexRetriever(
             index=rag_system['index'],
-            similarity_top_k=initial_candidates
+            similarity_top_k=initial_candidates,
+            filters=filters  # Apply filter at Qdrant search level
         )
-        
-        # Retrieve nodes
+
+        # Retrieve nodes (already filtered by Qdrant)
         nodes = retriever.retrieve(query_text)
-        
-        # Filter and boost nodes
+
+        logger.info(f"Retrieved {len(nodes)} nodes after Qdrant filtering")
+
+        # Boost nodes based on filename relevance
         filtered_and_boosted_nodes = []
         for node in nodes:
             # Ensure metadata is properly accessed
             node_metadata = node.node.metadata if hasattr(node.node, 'metadata') else node.metadata
             file_name = node_metadata.get('file_name', 'Unknown')
-            
+
             # Debug logging
             logger.info(f"Processing node with file_name: {file_name}, metadata: {node_metadata}")
-            
-            # Filter by selected documents if any are selected
-            if selected_documents and file_name not in selected_documents:
-                logger.info(f"Filtering out {file_name} - not in selected documents")
-                continue
             
             # Calculate boost based on filename relevance
             boost_factor = 1.0
