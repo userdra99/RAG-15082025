@@ -1,0 +1,140 @@
+{
+  "test_strategy_version": "1.0",
+  "created_date": "2025-11-17",
+  "status": "READY_FOR_EXECUTION",
+  "total_test_cases": 42,
+  "test_phases": [
+    {
+      "phase": "Phase 1: Dependency Verification",
+      "priority": "CRITICAL",
+      "duration_estimate": "15 minutes",
+      "test_count": 5,
+      "test_ids": ["T1.1", "T1.2", "T1.3", "T1.4", "T1.5"]
+    },
+    {
+      "phase": "Phase 2: Unit Testing",
+      "priority": "CRITICAL",
+      "duration_estimate": "30 minutes",
+      "test_count": 8,
+      "test_ids": ["T2.1", "T2.2", "T2.3", "T2.4", "T2.5", "T6.1", "T6.2", "T6.3"]
+    },
+    {
+      "phase": "Phase 3: Integration Testing",
+      "priority": "HIGH",
+      "duration_estimate": "45 minutes",
+      "test_count": 10,
+      "test_ids": ["T3.1", "T3.2", "T3.3", "T3.4", "T3.5", "T3.6", "T4.1", "T4.2", "T4.3", "T4.4"]
+    },
+    {
+      "phase": "Phase 4: End-to-End Testing",
+      "priority": "HIGH",
+      "duration_estimate": "30 minutes",
+      "test_count": 6,
+      "test_ids": ["T5.1", "T5.2", "T5.3", "T5.4", "T5.5", "T6.4"]
+    },
+    {
+      "phase": "Phase 5: Performance Testing",
+      "priority": "MEDIUM",
+      "duration_estimate": "45 minutes",
+      "test_count": 3,
+      "test_ids": ["T7.1", "T7.2", "T7.3"]
+    }
+  ],
+  "critical_risk_areas": [
+    {
+      "area": "tree-sitter 0.25.2 compatibility",
+      "risk_level": "CRITICAL",
+      "mitigation": "Pin to 0.25.2, test all language bindings",
+      "test_coverage": ["T1.1", "T1.4", "T2.1", "T2.2", "T2.3"]
+    },
+    {
+      "area": "tiktoken availability",
+      "risk_level": "HIGH",
+      "mitigation": "Fallback to character-based chunking",
+      "test_coverage": ["T1.3", "T3.6", "T6.1"]
+    },
+    {
+      "area": "HybridChunker functionality",
+      "risk_level": "HIGH",
+      "mitigation": "Fallback to SentenceSplitter",
+      "test_coverage": ["T1.2", "T2.1", "T2.2", "T2.3", "T2.4", "T2.5", "T6.2"]
+    },
+    {
+      "area": "BGE-M3 integration",
+      "risk_level": "CRITICAL",
+      "mitigation": "Verify 1024 dimensions, test connectivity",
+      "test_coverage": ["T4.1", "T4.2", "T4.3", "T4.4"]
+    },
+    {
+      "area": "Document processing pipeline",
+      "risk_level": "CRITICAL",
+      "mitigation": "Test all formats with fallbacks",
+      "test_coverage": ["T3.1", "T3.2", "T3.3", "T3.4", "T3.5", "T5.1", "T5.2", "T5.3"]
+    }
+  ],
+  "test_environment": {
+    "services_required": [
+      {"name": "Qdrant", "url": "http://localhost:6333"},
+      {"name": "vLLM-LLM", "url": "http://localhost:8001"},
+      {"name": "vLLM-BGE-M3", "url": "http://localhost:8002"},
+      {"name": "Flask-App", "url": "http://localhost:5000"}
+    ],
+    "test_data_required": [
+      "Sample PDF documents (small, medium, large)",
+      "Sample DOCX documents (with tables, images, headings)",
+      "Sample Excel files (multiple sheets, complex tables)",
+      "Sample code files (Python, Java, JavaScript)"
+    ]
+  },
+  "success_criteria": {
+    "unit_test_coverage": ">90%",
+    "integration_test_coverage": ">80%",
+    "e2e_test_coverage": ">70%",
+    "critical_path_coverage": "100%",
+    "test_pass_rate": ">95%"
+  },
+  "deliverables": [
+    {
+      "name": "Test Strategy Document",
+      "path": "/home/dra/rag-zero7-new/RAG-15082025/docs/test-strategy-dependency-changes.md",
+      "status": "COMPLETED"
+    },
+    {
+      "name": "Test Execution Summary",
+      "path": "/home/dra/rag-zero7-new/RAG-15082025/docs/test-execution-summary.json",
+      "status": "COMPLETED"
+    },
+    {
+      "name": "Test Case Specifications",
+      "status": "IN_STRATEGY_DOC"
+    },
+    {
+      "name": "Test Automation Scripts",
+      "status": "IN_STRATEGY_DOC"
+    }
+  ],
+  "next_steps": [
+    "Execute Phase 1: Dependency Verification tests",
+    "Set up test environment with all required services",
+    "Prepare test data (PDF, DOCX, Excel, code samples)",
+    "Run automated test suite",
+    "Generate test reports",
+    "Address any critical failures",
+    "Validate performance metrics"
+  ],
+  "rollback_plan": {
+    "triggers": [
+      ">20% test failures in critical tests",
+      "BGE-M3 integration completely broken",
+      "Data loss or corruption detected",
+      "Performance degradation >50%"
+    ],
+    "procedure": [
+      "Stop all services",
+      "Restore previous requirements.txt versions",
+      "Rebuild Docker images",
+      "Verify system stability",
+      "Re-run test suite"
+    ]
+  }
+}
